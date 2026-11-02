@@ -1,0 +1,73 @@
+{
+  "neighbor_count": {"min": 3, "max": 5},
+
+  "neighbor_geography": {
+    "coastal":      {"coastal": 3, "island": 2, "river_valley": 2, "forest": 2, "mountain": 1, "steppe": 1, "desert": 1},
+    "island":       {"island": 3, "coastal": 3, "forest": 1},
+    "steppe":       {"steppe": 3, "mountain": 2, "river_valley": 2, "desert": 2, "forest": 2},
+    "mountain":     {"river_valley": 3, "mountain": 2, "steppe": 2, "forest": 2, "coastal": 1, "desert": 1},
+    "river_valley": {"river_valley": 2, "steppe": 2, "mountain": 2, "desert": 2, "coastal": 2, "forest": 2},
+    "desert":       {"river_valley": 3, "desert": 2, "steppe": 2, "mountain": 2, "coastal": 1},
+    "forest":       {"forest": 3, "mountain": 2, "river_valley": 2, "steppe": 2, "coastal": 2}
+  },
+
+  "economy_by_geography": {
+    "coastal":      {"seafaring": 3, "mercantile": 3, "agricultural": 2, "mixed": 2},
+    "island":       {"seafaring": 4, "mercantile": 2, "mixed": 1, "hunter_gatherer": 1},
+    "steppe":       {"pastoral_nomadic": 5, "mixed": 1, "agricultural": 1},
+    "mountain":     {"mixed": 3, "pastoral_nomadic": 2, "agricultural": 2, "hunter_gatherer": 1},
+    "river_valley": {"agricultural": 5, "mercantile": 2, "mixed": 2},
+    "desert":       {"pastoral_nomadic": 3, "mercantile": 3, "mixed": 1},
+    "forest":       {"hunter_gatherer": 3, "agricultural": 2, "mixed": 2}
+  },
+
+  "social_organization_by_economy": {
+    "agricultural":     {"kingdom": 3, "city_states": 2, "clans": 1, "tribal_confederation": 1},
+    "pastoral_nomadic": {"tribal_confederation": 4, "clans": 3, "kingdom": 1},
+    "seafaring":        {"city_states": 3, "merchant_republic": 2, "clans": 2, "kingdom": 1},
+    "hunter_gatherer":  {"clans": 4, "tribal_confederation": 2},
+    "mercantile":       {"merchant_republic": 4, "city_states": 4, "kingdom": 1},
+    "mixed":            {"kingdom": 2, "city_states": 2, "tribal_confederation": 2, "clans": 2}
+  },
+
+  "traits": {
+    "options": ["militaristic", "commercial", "religious", "expansionist", "isolationist", "cosmopolitan", "seafaring"],
+    "count": {"min": 1, "max": 2},
+    "base_weight": 1,
+    "bonus_by_economy": {
+      "mercantile":       {"commercial": 4, "cosmopolitan": 3, "seafaring": 1},
+      "seafaring":        {"seafaring": 4, "commercial": 2, "cosmopolitan": 1, "expansionist": 1},
+      "pastoral_nomadic": {"militaristic": 3, "expansionist": 2},
+      "agricultural":     {"religious": 2, "isolationist": 1},
+      "hunter_gatherer":  {"isolationist": 2, "religious": 1}
+    },
+    "incompatible": [["isolationist", "cosmopolitan"], ["isolationist", "expansionist"]]
+  },
+
+  "relative_power": {"much_weaker": 1, "weaker": 2, "equal": 3, "stronger": 2, "much_stronger": 1},
+
+  "attitude": {
+    "base": {"admiration": 1, "respect": 2, "indifference": 2, "distrust": 2, "contempt": 1, "hostility": 1},
+    "modifiers": [
+      {"when": {"target.economy": ["mercantile"]}, "add": {"admiration": 1.5, "respect": 1}},
+      {"when": {"target.cultural_traits": ["commercial", "cosmopolitan"]}, "add": {"admiration": 1, "respect": 0.5}},
+      {"when": {"target.cultural_traits": ["militaristic"]}, "add": {"distrust": 1.5, "hostility": 1, "respect": 0.5}},
+      {"when": {"target.cultural_traits": ["expansionist"]}, "add": {"distrust": 2, "hostility": 1}},
+      {"when": {"target.cultural_traits": ["religious"]}, "add": {"respect": 0.5}},
+      {"when": {"target.power": ["stronger", "much_stronger"]}, "add": {"admiration": 1.5, "distrust": 1}},
+      {"when": {"target.power": ["weaker", "much_weaker"]}, "add": {"contempt": 1.5, "indifference": 1}},
+      {"when": {"viewer.cultural_traits": ["isolationist"]}, "add": {"distrust": 2, "contempt": 1.5, "admiration": -0.5}},
+      {"when": {"viewer.cultural_traits": ["cosmopolitan"]}, "add": {"respect": 1.5, "admiration": 1, "contempt": -0.5}},
+      {"when": {"viewer.cultural_traits": ["militaristic", "expansionist"]}, "add": {"contempt": 1, "hostility": 1}},
+      {"when": {"viewer.economy": ["agricultural"], "target.economy": ["pastoral_nomadic"]}, "add": {"distrust": 2, "hostility": 0.5}}
+    ]
+  },
+
+  "contact_intensity_by_separation": {
+    "land_border": {"sporadic": 1, "regular": 3, "intense": 2},
+    "river":       {"sporadic": 1, "regular": 3, "intense": 2},
+    "sea":         {"sporadic": 2, "regular": 3, "intense": 1},
+    "mountains":   {"sporadic": 3, "regular": 2, "intense": 0.5},
+    "desert":      {"sporadic": 3, "regular": 2, "intense": 0.5}
+  }
+}

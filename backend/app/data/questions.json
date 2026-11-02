@@ -1,0 +1,153 @@
+[
+  {
+    "id": "geography",
+    "category": "civilization",
+    "prompt": "Where does this civilization live?",
+    "input_type": "single_select",
+    "maps_to": "civilization.geography",
+    "options": [
+      {"value": "coastal", "label": "Coast", "description": "Shorelines, bays, and harbors"},
+      {"value": "island", "label": "Islands", "description": "An archipelago or a single large island"},
+      {"value": "steppe", "label": "Grasslands and steppes", "description": "Open plains with few trees"},
+      {"value": "mountain", "label": "Mountain highlands", "description": "Peaks, passes, and high valleys"},
+      {"value": "river_valley", "label": "River valley", "description": "Fertile land along a major river"},
+      {"value": "desert", "label": "Desert", "description": "Arid land, oases, and dunes"},
+      {"value": "forest", "label": "Forest", "description": "Dense woodland"}
+    ]
+  },
+  {
+    "id": "economy",
+    "category": "civilization",
+    "prompt": "How do these people mainly make their living?",
+    "input_type": "single_select",
+    "maps_to": "civilization.economy",
+    "options": [
+      {"value": "agricultural", "label": "Settled farming"},
+      {"value": "pastoral_nomadic", "label": "Nomadic herding"},
+      {"value": "seafaring", "label": "Seafaring and fishing"},
+      {"value": "hunter_gatherer", "label": "Hunting and gathering"},
+      {"value": "mercantile", "label": "Trade and commerce"},
+      {"value": "mixed", "label": "Mixed economy"}
+    ]
+  },
+  {
+    "id": "social_organization",
+    "category": "civilization",
+    "prompt": "How is their society organized?",
+    "input_type": "single_select",
+    "maps_to": "civilization.social_organization",
+    "options": [
+      {"value": "tribal_confederation", "label": "Tribal confederation"},
+      {"value": "city_states", "label": "Independent city-states"},
+      {"value": "kingdom", "label": "Centralized kingdom"},
+      {"value": "merchant_republic", "label": "Merchant republic"},
+      {"value": "clans", "label": "Decentralized clans"}
+    ]
+  },
+  {
+    "id": "cultural_traits",
+    "category": "civilization",
+    "prompt": "Which traits describe their culture? Pick any.",
+    "input_type": "multi_select",
+    "maps_to": "civilization.cultural_traits",
+    "options": [
+      {"value": "militaristic", "label": "Militaristic"},
+      {"value": "commercial", "label": "Commercial"},
+      {"value": "religious", "label": "Religious"},
+      {"value": "expansionist", "label": "Expansionist"},
+      {"value": "isolationist", "label": "Isolationist"},
+      {"value": "cosmopolitan", "label": "Cosmopolitan"},
+      {"value": "seafaring", "label": "Seafaring"}
+    ]
+  },
+  {
+    "id": "civilization_description",
+    "category": "civilization",
+    "prompt": "Describe this civilization in a sentence or two.",
+    "input_type": "free_text",
+    "maps_to": "civilization.description"
+  },
+  {
+    "id": "word_order",
+    "category": "grammar",
+    "prompt": "What is the basic word order of a sentence?",
+    "help": "S = subject, O = object, V = verb. English is SVO ('the cat eats fish'); Japanese is SOV ('the cat fish eats').",
+    "input_type": "single_select",
+    "maps_to": "language_preferences.word_order",
+    "options": [
+      {"value": "SOV", "label": "Subject - Object - Verb"},
+      {"value": "SVO", "label": "Subject - Verb - Object"},
+      {"value": "VSO", "label": "Verb - Subject - Object"},
+      {"value": "VOS", "label": "Verb - Object - Subject"},
+      {"value": "OVS", "label": "Object - Verb - Subject"},
+      {"value": "OSV", "label": "Object - Subject - Verb"}
+    ]
+  },
+  {
+    "id": "morphological_type",
+    "category": "grammar",
+    "prompt": "How are words built?",
+    "input_type": "single_select",
+    "maps_to": "language_preferences.morphological_type",
+    "options": [
+      {"value": "isolating", "label": "Mostly short, unchanging words", "description": "Grammar is expressed with separate words, like Mandarin."},
+      {"value": "agglutinative", "label": "Words built from clear, stackable pieces", "description": "Each suffix has one meaning, like Turkish."},
+      {"value": "fusional", "label": "Endings that combine several meanings", "description": "One ending can mark case, number, and gender at once, like Latin."},
+      {"value": "polysynthetic", "label": "Very long words that can express whole sentences", "description": "Like Inuktitut."}
+    ]
+  },
+  {
+    "id": "grammatical_gender",
+    "category": "grammar",
+    "prompt": "Should nouns be sorted into grammatical genders or classes?",
+    "help": "Like Spanish 'el sol' (masculine) vs 'la luna' (feminine).",
+    "input_type": "yes_no",
+    "maps_to": "language_preferences.grammatical_gender"
+  },
+  {
+    "id": "case_marking",
+    "category": "grammar",
+    "prompt": "Should nouns change their endings depending on their role in the sentence?",
+    "help": "Called grammatical case. In Latin, 'puella' is 'girl' as a subject but 'puellam' as an object.",
+    "input_type": "yes_no",
+    "maps_to": "language_preferences.case_marking"
+  },
+  {
+    "id": "special_features",
+    "category": "grammar",
+    "prompt": "Describe one unusual grammatical feature you'd like.",
+    "help": "For example: 'verbs show whether the speaker saw the event or heard about it'.",
+    "input_type": "free_text",
+    "maps_to": "language_preferences.special_features"
+  },
+  {
+    "id": "sound_preferences",
+    "category": "phonology",
+    "prompt": "What should the language sound like? Mention sounds to favor or avoid.",
+    "help": "For example: 'soft and flowing, lots of l and m, no harsh k sounds'.",
+    "input_type": "free_text",
+    "maps_to": "language_preferences.sound_preferences"
+  },
+  {
+    "id": "word_hello",
+    "category": "vocabulary",
+    "prompt": "What is the word for \"hello\"?",
+    "input_type": "custom_word",
+    "maps_to": "language_preferences.custom_words.hello"
+  },
+  {
+    "id": "word_water",
+    "category": "vocabulary",
+    "prompt": "What is the word for \"water\"?",
+    "input_type": "custom_word",
+    "maps_to": "language_preferences.custom_words.water"
+  },
+  {
+    "id": "custom_words",
+    "category": "vocabulary",
+    "prompt": "Are there any other words you want to define yourself?",
+    "help": "Pick a meaning and type the word, e.g. sea = nal. Your words are kept exactly as written.",
+    "input_type": "custom_vocabulary",
+    "maps_to": "language_preferences.custom_words"
+  }
+]

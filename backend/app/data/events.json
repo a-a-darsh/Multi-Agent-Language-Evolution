@@ -1,0 +1,91 @@
+{
+  "world_effects": [
+    {"id": "home_civ1_become_hostile", "kind": "set_attitude", "viewer": "HOME_CIV", "target": "CIV1", "attitude": "hostility",
+     "description": "Relationship between HOME_CIV and CIV1 becomes hostile"},
+    {"id": "home_civ1_improve", "kind": "shift_attitude", "viewer": "HOME_CIV", "target": "CIV1", "steps": 1,
+     "description": "Relationship between HOME_CIV and CIV1 improves"},
+    {"id": "home_civ1_worsen", "kind": "shift_attitude", "viewer": "HOME_CIV", "target": "CIV1", "steps": -1,
+     "description": "Relationship between HOME_CIV and CIV1 worsens"},
+    {"id": "home_admires_civ1_more", "kind": "shift_attitude", "viewer": "HOME_CIV", "target": "CIV1", "steps": 1, "reciprocal": false,
+     "description": "HOME_CIV comes to think more highly of CIV1 (one-sided)"},
+    {"id": "home_civ2_greatly_improve", "kind": "shift_attitude", "viewer": "HOME_CIV", "target": "CIV2", "steps": 2,
+     "description": "Relationship between HOME_CIV and CIV2 greatly improves"},
+    {"id": "home_civ1_add_warfare", "kind": "add_contact_type", "a": "HOME_CIV", "b": "CIV1", "contact_type": "warfare",
+     "description": "HOME_CIV and CIV1 are at war"},
+    {"id": "home_civ1_end_warfare", "kind": "remove_contact_type", "a": "HOME_CIV", "b": "CIV1", "contact_type": "warfare",
+     "description": "HOME_CIV and CIV1 stop fighting"},
+    {"id": "home_civ1_add_raiding", "kind": "add_contact_type", "a": "HOME_CIV", "b": "CIV1", "contact_type": "raiding",
+     "description": "CIV1 raids HOME_CIV"},
+    {"id": "home_civ1_add_trade", "kind": "add_contact_type", "a": "HOME_CIV", "b": "CIV1", "contact_type": "trade",
+     "description": "HOME_CIV and CIV1 trade"},
+    {"id": "home_civ1_end_trade", "kind": "remove_contact_type", "a": "HOME_CIV", "b": "CIV1", "contact_type": "trade",
+     "description": "Trade between HOME_CIV and CIV1 stops"},
+    {"id": "home_civ1_add_religious", "kind": "add_contact_type", "a": "HOME_CIV", "b": "CIV1", "contact_type": "religious",
+     "description": "HOME_CIV and CIV1 share religious contact"},
+    {"id": "home_civ2_add_diplomacy", "kind": "add_contact_type", "a": "HOME_CIV", "b": "CIV2", "contact_type": "diplomacy",
+     "description": "HOME_CIV and CIV2 are formally allied"},
+    {"id": "home_civ1_contact_intense", "kind": "set_contact_intensity", "a": "HOME_CIV", "b": "CIV1", "intensity": "intense",
+     "description": "Contact between HOME_CIV and CIV1 becomes intense"}
+  ],
+
+  "linguistic_effects": [
+    {"id": "borrow_commerce_from_civ1", "kind": "borrow_vocabulary", "donor": "CIV1", "recipient": "HOME_CIV",
+     "semantic_categories": ["commerce"], "description": "HOME_CIV borrows trade vocabulary from CIV1"},
+    {"id": "borrow_military_from_civ1", "kind": "borrow_vocabulary", "donor": "CIV1", "recipient": "HOME_CIV",
+     "semantic_categories": ["conflict"], "description": "HOME_CIV borrows military vocabulary from CIV1"},
+    {"id": "borrow_religious_from_civ1", "kind": "borrow_vocabulary", "donor": "CIV1", "recipient": "HOME_CIV",
+     "semantic_categories": ["belief"], "description": "HOME_CIV borrows religious vocabulary from CIV1"}
+  ],
+
+  "events": [
+    {
+      "id": "declare_war_and_ally",
+      "name": "War and alliance",
+      "description_template": "[HOME_CIV] declares war on [CIV1] and allies with [CIV2]",
+      "slots": [{"name": "CIV1", "description": "The enemy"}, {"name": "CIV2", "description": "The new ally"}],
+      "world_effect_ids": ["home_civ1_become_hostile", "home_civ1_add_warfare", "home_civ1_end_trade",
+                           "home_civ2_greatly_improve", "home_civ2_add_diplomacy"],
+      "linguistic_effect_ids": []
+    },
+    {
+      "id": "open_trade_route",
+      "name": "New trade route",
+      "description_template": "[HOME_CIV] and [CIV1] open a trade route",
+      "slots": [{"name": "CIV1"}],
+      "world_effect_ids": ["home_civ1_add_trade", "home_civ1_contact_intense", "home_civ1_improve"],
+      "linguistic_effect_ids": ["borrow_commerce_from_civ1"]
+    },
+    {
+      "id": "foreign_merchants_prosper",
+      "name": "Foreign merchants prosper",
+      "description_template": "Merchants from [CIV1] grow wealthy in the markets of [HOME_CIV]",
+      "slots": [{"name": "CIV1", "conditions": {"economy": ["mercantile", "seafaring"]}}],
+      "world_effect_ids": ["home_admires_civ1_more", "home_civ1_add_trade"],
+      "linguistic_effect_ids": ["borrow_commerce_from_civ1"]
+    },
+    {
+      "id": "peace_treaty",
+      "name": "Peace treaty",
+      "description_template": "[HOME_CIV] and [CIV1] swear a peace",
+      "slots": [{"name": "CIV1"}],
+      "world_effect_ids": ["home_civ1_end_warfare", "home_civ1_improve"],
+      "linguistic_effect_ids": []
+    },
+    {
+      "id": "missionaries_arrive",
+      "name": "Missionaries arrive",
+      "description_template": "Priests from [CIV1] bring their gods to [HOME_CIV]",
+      "slots": [{"name": "CIV1", "conditions": {"cultural_traits": ["religious"]}}],
+      "world_effect_ids": ["home_civ1_add_religious"],
+      "linguistic_effect_ids": ["borrow_religious_from_civ1"]
+    },
+    {
+      "id": "border_raids",
+      "name": "Border raids",
+      "description_template": "Riders from [CIV1] raid the borderlands of [HOME_CIV]",
+      "slots": [{"name": "CIV1", "conditions": {"economy": ["pastoral_nomadic"]}}],
+      "world_effect_ids": ["home_civ1_add_raiding", "home_civ1_worsen"],
+      "linguistic_effect_ids": ["borrow_military_from_civ1"]
+    }
+  ]
+}

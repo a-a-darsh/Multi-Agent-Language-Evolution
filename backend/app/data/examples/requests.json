@@ -1,0 +1,30 @@
+{
+  "coastal_trading_sov": {
+    "civilization": {"geography": "coastal", "economy": "mercantile", "cultural_traits": ["seafaring", "cosmopolitan"]},
+    "language_preferences": {"word_order": "SOV", "custom_words": {"hello": "sava", "water": "mari"}},
+    "seed": 42
+  },
+  "nomadic_agglutinative": {
+    "civilization": {"geography": "steppe", "economy": "pastoral_nomadic", "social_organization": "tribal_confederation"},
+    "language_preferences": {"morphological_type": "agglutinative", "case_marking": true},
+    "seed": 7
+  },
+  "mountain_custom_vocabulary": {
+    "civilization": {"geography": "mountain", "economy": "mixed", "cultural_traits": ["isolationist"]},
+    "language_preferences": {"custom_words": {"mountain": "tor", "goat": "kabru", "snow": "ilun", "mother": "ama"}},
+    "seed": 1234
+  },
+  "evidentiality": {
+    "civilization": {"geography": "river_valley", "economy": "agricultural", "cultural_traits": ["religious"]},
+    "language_preferences": {"special_features": ["Verbs show whether the speaker saw the event directly or only heard about it"]},
+    "seed": 99
+  },
+  "conflicting_constraints": {
+    "civilization": {"geography": "desert", "economy": "mercantile"},
+    "language_preferences": {
+      "sound_preferences": "Never use the s sound",
+      "custom_words": {"water": "sava", "oasis": "strak"}
+    },
+    "seed": 5
+  }
+}
