@@ -4,6 +4,13 @@ from app.models.lexicon import ConceptPriority
 from app.models.questionnaire import InputType
 
 
+def test_data_files_have_no_byte_order_mark():
+    # Regression: a BOM written by a Windows editor broke every questionnaire request.
+    from app.data import DATA_DIR
+    for path in DATA_DIR.rglob("*.json"):
+        assert not path.read_bytes().startswith(b"\xef\xbb\xbf"), path.name
+
+
 def test_semantic_inventory_size_and_unique_ids():
     concepts = load_semantic_inventory()
     ids = [c.id for c in concepts]
@@ -11,8 +18,16 @@ def test_semantic_inventory_size_and_unique_ids():
     core = [c for c in concepts if c.priority == ConceptPriority.CORE]
     cultural = [c for c in concepts if c.priority == ConceptPriority.CULTURAL]
     assert len(core) >= 100
-    assert 30 <= len(cultural) <= 70
+    assert 30 <= len(cultural) <= 120
     assert all(c.cultural_tags for c in cultural)
+
+
+def test_concept_eras_are_valid():
+    from app.models.eras import ERAS
+    era_question = next(q for q in load_questions() if q.id == "era")
+    assert [o.value for o in era_question.options] == list(ERAS)
+    for c in load_semantic_inventory():
+        assert c.min_era is None or c.min_era in ERAS, c.id
 
 
 def test_question_ids_unique_and_maps_to_resolve():

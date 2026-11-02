@@ -11,16 +11,32 @@ Local LLM: Ollama with `hf.co/unsloth/Mistral-Small-3.2-24B-Instruct-2506-GGUF:Q
 (models stored in `K:\Ollama\models` via the `OLLAMA_MODELS` user env var).
 Embeddings: `nomic-embed-text` in Ollama.
 
+Try the design agent:
+
+```
+python -m uv run python -m app.cli design --example coastal_trading_sov   # uses the LLM saved in the UI
+python -m uv run python -m app.cli design --example evidentiality --model <ollama model>
+python -m uv run python -m app.cli generate --example coastal_trading_sov  # design + full dictionary
+python -m uv run python -m app.cli graph                                   # Mermaid diagram of the workflow
+```
+
+Runs are saved to `backend/.local/runs/` with every prompt, reply, and validation issue.
+
 ## Status
 
 - [x] Phase 1 - domain models, semantic inventory, question bank, example requests
 - [x] Phase 2 - phonology engine: syllable parser/validator, seeded generators, root registry, user-word analysis
 - [x] Phase 3 - morphological engine: word assembly, boundary repair, derivation, whole-lexicon validator
-- [ ] Phase 4 - Language Design Agent (LangGraph)
-- [ ] Phase 5 - morphological planning
-- [ ] Phase 6 - RAG
-- [ ] Phase 7 - persistence and API
-- [ ] Phase 8 - frontend
+- [x] Phase 4 - Language Design Agent (LangGraph): design -> validate -> critique -> repair loop,
+  recorded/replayable LLM calls
+- [x] Phase 5 - morphological planner (LangGraph): concept selection, LLM plan, deterministic build,
+  partial repair, per-derivation critic; full pipeline (`app.cli generate`)
+  - Known limits with local Mistral Small: ~12-20 derivations per ~155 entries; the design agent
+    sometimes names affixes after cultural themes rather than functions (agent, place...).
+- [x] Phase 7 - persistence (SQLite) and API, background generation jobs with live progress
+- [x] Phase 8 - frontend: questionnaire -> progress -> overview, dictionary explorer, world, generation log
+- Moved to MVP 2: RAG. Decision: retrieval is only used for language *evolution* (historical precedent,
+  contact outcomes, simulation memory); the founding language is generated without it.
 
 ## Layout
 
@@ -35,6 +51,22 @@ Embeddings: `nomic-embed-text` in Ollama.
 | `app/generation/user_vocabulary.py` | Infers what user words require of the phonology |
 | `app/generation/morphological_engine.py` | Builds words from morphemes; the tool the Phase 5 planner will call |
 | `app/validation/morphology_validator.py` | Whole-lexicon checks: compositionality, duplicates, derivation graph |
+| `app/llm/chat_model.py` | Saved settings -> LangChain chat model (Ollama/OpenAI/Anthropic/OpenRouter) |
+| `app/llm/structured.py` | Structured-output calls, call records, scripted and replay LLMs |
+| `app/agents/design_schema.py` | The schema the design LLM fills in (field descriptions are prompt text) |
+| `app/agents/design_validation.py` | Draft -> domain models, plus constraint and usability checks |
+| `app/agents/language_designer.py` | The LangGraph workflow and prompts |
+| `app/generation/concept_selection.py` | Core concepts + culture-matched concepts for the dictionary |
+| `app/generation/dictionary_builder.py` | Executes a plan: roots, derivations, fallbacks, collision re-rolls |
+| `app/agents/dictionary_schema.py` | Run-time (dynamic) schemas for plan, repair, and critic |
+| `app/agents/morphological_planner.py` | The planner workflow (plan -> build -> critique -> repair) |
+| `app/agents/pipeline.py` | Parent graph: design agent, then planner |
+| `app/agents/runner.py` | Runs a graph with `stream()` to report each finished node (progress) |
+| `app/persistence/` | SQLite tables and the repository (the only code that knows storage) |
+| `app/services/generation_jobs.py` | Background generation jobs, one at a time |
+| `app/services/dictionary_view.py` | Dictionary search, entry details, word families |
+| `app/api/languages.py` | Generation jobs, languages, dictionary, world, and log endpoints |
+| `app/cli.py` | Run agents from the command line against a real model |
 | `app/generation/world_generator.py` | Fills missing civilization traits; generates neighbors and relationships |
 | `app/data/world_generation.json` | All weights and rules for world generation (tunable without code changes) |
 | `app/models/events.py` | Event templates, reusable effects, and recorded event history |
@@ -68,6 +100,20 @@ Embeddings: `nomic-embed-text` in Ollama.
   events influence how the language *changes* (e.g. loanwords), never its
   founding state. The focal civilization is completed from its own RNG
   stream, so it is identical regardless of neighbor generation (tested).
+- **Words can share meanings (polysemy).** A lexeme has a list of senses.
+  Two routes: the user gives the same spelling to two meanings (one word,
+  both senses), or the planner lists `extended_senses` (wealth = the word for
+  zinc, where zinc is money). Code checks same part of speech and no
+  borrowing of a borrowed word; the critic reviews shared words like
+  derivations, and rejected ones get their own root. The dictionary shows
+  every meaning, and searching any of them finds the word.
+- **Era shapes vocabulary.** Six technology eras (Stone Age to Early Modern;
+  `models/eras.py`). Concepts can be tagged with eras where they're
+  characteristic (era matches count double in selection) and a `min_era`
+  before which they don't exist, so a Bronze Age dictionary gets copper and
+  chariots but never coins or gunpowder. Later eras keep earlier vocabulary.
+  The era question is always asked; a written answer like "around 1500 BCE"
+  sets both the founding year and the era. Neighbors share the era.
 - **Neighbors are procedural, not LLM-generated.** 3-5 neighbors are drawn from
   seeded weighted tables (geography adjacency -> economy -> social organization
   -> traits). The LLM may later add narrative, but must not contradict these facts.
@@ -100,6 +146,36 @@ Embeddings: `nomic-embed-text` in Ollama.
   treat that file like a password, and it is never returned to the frontend,
   which only sees a hint. Embeddings for RAG are a separate choice, to be
   made in Phase 6 (Anthropic has no embeddings API).
+- **Design agent: generator + critic.** Code checks structure (`validate`);
+  a second LLM role checks meaning (`critique`, temperature 0). Lessons from
+  real runs that shaped it:
+  - Fields with defaults are optional in the JSON schema, so the model skipped
+    them. Fields needing a decision have no defaults.
+  - "Keep everything else the same" plus the old JSON made repairs copy the
+    old answer. Repair prompts list problems first, as instructions.
+  - A critic asked "any problems?" rubber-stamped. It now reviews each affix
+    (apply to an example, then classify) and code computes the verdict.
+  - Open-ended critic opinions were mostly taste, and chasing them bloated
+    designs (4 -> 12 features). Only narrow critic judgments trigger repair;
+    the rest are reported as advisory warnings.
+  - An unbounded string field looped for 9,600 words. All critic strings
+    have max lengths and every call has a token cap.
+  - Unambiguous fixes are made by code, not requested from the LLM: letters
+    and syllable shapes the user's words need, and hyphens in affix forms.
+  - Structural errors fail the run once the repair budget is spent; critic
+    findings don't (the design is accepted with warnings), and a repair that
+    breaks a valid design falls back to the previous version.
+- **Generation runs as a background job.** `POST /api/generations` validates
+  answers, then returns a job id at once; a single worker thread runs the
+  pipeline and records each LangGraph node as it finishes; the UI polls.
+  The language row and the job's "succeeded" status are written in one
+  transaction, so a half-finished language is never visible. Jobs left
+  running when the server restarts are marked `INTERRUPTED`.
+- **Storage is document-style.** Languages are saved as JSON of the Pydantic
+  `LanguageState` and `World`, plus indexed summary columns. Domain models
+  never touch the ORM; per-entity tables can come later behind the repository.
+- **The world and the language share one civilization.** The job generates
+  the world first and passes its home civilization into the pipeline.
 - **Words are computed, never typed.** `assemble(morphemes)` is a pure
   function; every stored form must equal what its morphemes produce
   (`FORM_MISMATCH` otherwise). Sound changes will rely on this.

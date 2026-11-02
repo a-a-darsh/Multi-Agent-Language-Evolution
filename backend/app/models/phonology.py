@@ -23,8 +23,9 @@ class CatalogEntry(NamedTuple):
     ipa: str
 
 
-# MVP orthography: every supported grapheme is one Latin character mapped to
-# exactly one phoneme. A language picks a subset of this catalog.
+# MVP orthography: every grapheme maps to exactly one phoneme and vice versa.
+# Graphemes are single letters or digraphs ("sh" is one sound, /ʃ/, not s + h).
+# Spellings are read longest-match first. A language picks a subset of this catalog.
 GRAPHEME_CATALOG: dict[str, CatalogEntry] = {
     **{v: CatalogEntry(PhonemeClass.VOWEL, v) for v in "aeiou"},
     **{
@@ -32,10 +33,15 @@ GRAPHEME_CATALOG: dict[str, CatalogEntry] = {
         for g, ipa in {
             "p": "p", "b": "b", "t": "t", "d": "d", "k": "k", "g": "ɡ", "q": "q",
             "m": "m", "n": "n", "f": "f", "v": "v", "s": "s", "z": "z", "h": "h",
-            "x": "x", "l": "l", "r": "r", "w": "w", "y": "j", "c": "tʃ", "j": "dʒ",
+            "x": "x", "l": "l", "r": "r", "w": "w", "y": "j", "j": "dʒ",
+            # "c" was /tʃ/ until digraphs were added; "ch" now spells /tʃ/, so "c" is /ts/
+            # (as in Pinyin and Slavic orthographies). Stored languages keep their recorded IPA.
+            "c": "ts",
+            "sh": "ʃ", "ch": "tʃ", "zh": "ʒ", "th": "θ", "dh": "ð", "ng": "ŋ",
         }.items()
     },
 }
+DIGRAPHS: frozenset[str] = frozenset(g for g in GRAPHEME_CATALOG if len(g) > 1)
 
 # Syllable shapes the MVP engine understands. No clusters, tone, or length yet.
 SUPPORTED_PATTERNS: frozenset[str] = frozenset({"V", "CV", "VC", "CVC"})

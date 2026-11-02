@@ -10,7 +10,9 @@ DATA_DIR = Path(__file__).parent
 
 
 def _read_json(name: str):
-    return json.loads((DATA_DIR / name).read_text(encoding="utf-8"))
+    # utf-8-sig tolerates a byte-order mark: Windows PowerShell 5's `Set-Content -Encoding utf8`
+    # adds one, and plain utf-8 decoding then made every questionnaire request fail.
+    return json.loads((DATA_DIR / name).read_text(encoding="utf-8-sig"))
 
 
 @cache

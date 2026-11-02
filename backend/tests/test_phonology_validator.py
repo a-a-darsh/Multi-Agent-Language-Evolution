@@ -67,6 +67,15 @@ def test_word_edge_restrictions():
     assert codes("sara", phonology) == []
 
 
+def test_spelling_must_read_back_to_the_same_sounds():
+    phonology = sample_phonology(phonemes=[Phoneme.from_grapheme(g) for g in ["s", "h", "sh", "a", "t"]],
+                                 syllable_patterns=["V", "CV", "CVC"], restrictions=[])
+    # tas.ha: s (coda) + h (onset) would be written "tasha" and read back as ta + sha.
+    assert codes(["t", "a", "s", "h", "a"], phonology) == ["AMBIGUOUS_SPELLING"]
+    assert codes(["t", "a", "sh", "a"], phonology) == []
+    assert codes(["t", "a", "s", "t", "a"], phonology) == []
+
+
 def test_syllabify_uses_maximal_onset():
     phonology = sample_phonology(syllable_patterns=["V", "VC", "CV", "CVC"])
     assert [s.pattern for s in syllabify(list("aka"), phonology)] == ["V", "CV"]

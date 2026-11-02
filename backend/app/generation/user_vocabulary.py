@@ -13,7 +13,7 @@ from pydantic import Field
 from app.generation.phoneme_generator import UnsupportedSpellingError, parse_spelling
 from app.models.common import DomainModel
 from app.models.phonology import GRAPHEME_CATALOG, SUPPORTED_PATTERNS, Phoneme, Phonology, PhonemeClass
-from app.models.validation import ValidationResult
+from app.models.validation import Severity, ValidationResult
 from app.validation.phonology_validator import syllabify, validate_phoneme_sequence
 
 
@@ -69,9 +69,10 @@ def analyze_user_words(custom_words: Mapping[str, str]) -> tuple[PhonologyRequir
         by_form[tuple(w.phonemes)].append(w.concept_id)
     for form, concepts in by_form.items():
         if len(concepts) > 1:
-            result.add("DUPLICATE_USER_FORM",
-                       f"The same word {''.join(form)!r} was given for {concepts}",
-                       details={"form": "".join(form), "concepts": concepts})
+            # Intentional polysemy (kijur = zinc, wealth): one word with several meanings.
+            result.add("USER_POLYSEMY",
+                       f"{''.join(form)!r} will be one word meaning {', '.join(concepts)}",
+                       details={"form": "".join(form), "concepts": concepts}, severity=Severity.WARNING)
 
     requirements = PhonologyRequirements(
         words=words,

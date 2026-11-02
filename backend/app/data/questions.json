@@ -1,18 +1,96 @@
 [
   {
+    "id": "civilization_name",
+    "category": "civilization",
+    "prompt": "What is your civilization called?",
+    "help": "Leave blank and a name will be generated.",
+    "input_type": "short_text",
+    "maps_to": "civilization.name",
+    "always_ask": true
+  },
+  {
+    "id": "era",
+    "category": "civilization",
+    "always_ask": true,
+    "prompt": "When does your civilization begin?",
+    "help": "This sets their technology, and so which things they have words for. You can also describe your own, e.g. 'around 1500 BCE'.",
+    "input_type": "single_select",
+    "maps_to": "civilization.era",
+    "options": [
+      {
+        "value": "stone_age",
+        "label": "Stone Age",
+        "description": "Before ~3300 BCE: flint tools, hunting, first farms"
+      },
+      {
+        "value": "bronze_age",
+        "label": "Bronze Age",
+        "description": "~3300-1200 BCE: copper, chariots, palaces, writing"
+      },
+      {
+        "value": "iron_age",
+        "label": "Iron Age",
+        "description": "~1200-500 BCE: iron, coins, fortresses"
+      },
+      {
+        "value": "classical",
+        "label": "Classical",
+        "description": "~500 BCE-500 CE: philosophy, empires, aqueducts"
+      },
+      {
+        "value": "medieval",
+        "label": "Medieval",
+        "description": "~500-1500 CE: castles, guilds, mills"
+      },
+      {
+        "value": "early_modern",
+        "label": "Early Modern",
+        "description": "~1500-1800 CE: printing, gunpowder, compasses"
+      }
+    ]
+  },
+  {
     "id": "geography",
     "category": "civilization",
     "prompt": "Where does this civilization live?",
     "input_type": "single_select",
     "maps_to": "civilization.geography",
     "options": [
-      {"value": "coastal", "label": "Coast", "description": "Shorelines, bays, and harbors"},
-      {"value": "island", "label": "Islands", "description": "An archipelago or a single large island"},
-      {"value": "steppe", "label": "Grasslands and steppes", "description": "Open plains with few trees"},
-      {"value": "mountain", "label": "Mountain highlands", "description": "Peaks, passes, and high valleys"},
-      {"value": "river_valley", "label": "River valley", "description": "Fertile land along a major river"},
-      {"value": "desert", "label": "Desert", "description": "Arid land, oases, and dunes"},
-      {"value": "forest", "label": "Forest", "description": "Dense woodland"}
+      {
+        "value": "coastal",
+        "label": "Coast",
+        "description": "Shorelines, bays, and harbors"
+      },
+      {
+        "value": "island",
+        "label": "Islands",
+        "description": "An archipelago or a single large island"
+      },
+      {
+        "value": "steppe",
+        "label": "Grasslands and steppes",
+        "description": "Open plains with few trees"
+      },
+      {
+        "value": "mountain",
+        "label": "Mountain highlands",
+        "description": "Peaks, passes, and high valleys"
+      },
+      {
+        "value": "river_valley",
+        "label": "River valley",
+        "description": "Fertile land along a major river"
+      },
+      {
+        "value": "desert",
+        "label": "Desert",
+        "description": "Arid land, oases, and dunes"
+      },
+      {
+        "value": "forest",
+        "label": "Forest",
+        "description": "Dense woodland"
+      }
     ]
   },
   {
@@ -22,12 +100,30 @@
     "input_type": "single_select",
     "maps_to": "civilization.economy",
     "options": [
-      {"value": "agricultural", "label": "Settled farming"},
-      {"value": "pastoral_nomadic", "label": "Nomadic herding"},
-      {"value": "seafaring", "label": "Seafaring and fishing"},
-      {"value": "hunter_gatherer", "label": "Hunting and gathering"},
-      {"value": "mercantile", "label": "Trade and commerce"},
-      {"value": "mixed", "label": "Mixed economy"}
+      {
+        "value": "agricultural",
+        "label": "Settled farming"
+      },
+      {
+        "value": "pastoral_nomadic",
+        "label": "Nomadic herding"
+      },
+      {
+        "value": "seafaring",
+        "label": "Seafaring and fishing"
+      },
+      {
+        "value": "hunter_gatherer",
+        "label": "Hunting and gathering"
+      },
+      {
+        "value": "mercantile",
+        "label": "Trade and commerce"
+      },
+      {
+        "value": "mixed",
+        "label": "Mixed economy"
+      }
     ]
   },
   {
@@ -37,11 +133,26 @@
     "input_type": "single_select",
     "maps_to": "civilization.social_organization",
     "options": [
-      {"value": "tribal_confederation", "label": "Tribal confederation"},
-      {"value": "city_states", "label": "Independent city-states"},
-      {"value": "kingdom", "label": "Centralized kingdom"},
-      {"value": "merchant_republic", "label": "Merchant republic"},
-      {"value": "clans", "label": "Decentralized clans"}
+      {
+        "value": "tribal_confederation",
+        "label": "Tribal confederation"
+      },
+      {
+        "value": "city_states",
+        "label": "Independent city-states"
+      },
+      {
+        "value": "kingdom",
+        "label": "Centralized kingdom"
+      },
+      {
+        "value": "merchant_republic",
+        "label": "Merchant republic"
+      },
+      {
+        "value": "clans",
+        "label": "Decentralized clans"
+      }
     ]
   },
   {
@@ -51,13 +162,34 @@
     "input_type": "multi_select",
     "maps_to": "civilization.cultural_traits",
     "options": [
-      {"value": "militaristic", "label": "Militaristic"},
-      {"value": "commercial", "label": "Commercial"},
-      {"value": "religious", "label": "Religious"},
-      {"value": "expansionist", "label": "Expansionist"},
-      {"value": "isolationist", "label": "Isolationist"},
-      {"value": "cosmopolitan", "label": "Cosmopolitan"},
-      {"value": "seafaring", "label": "Seafaring"}
+      {
+        "value": "militaristic",
+        "label": "Militaristic"
+      },
+      {
+        "value": "commercial",
+        "label": "Commercial"
+      },
+      {
+        "value": "religious",
+        "label": "Religious"
+      },
+      {
+        "value": "expansionist",
+        "label": "Expansionist"
+      },
+      {
+        "value": "isolationist",
+        "label": "Isolationist"
+      },
+      {
+        "value": "cosmopolitan",
+        "label": "Cosmopolitan"
+      },
+      {
+        "value": "seafaring",
+        "label": "Seafaring"
+      }
     ]
   },
   {
@@ -75,12 +207,30 @@
     "input_type": "single_select",
     "maps_to": "language_preferences.word_order",
     "options": [
-      {"value": "SOV", "label": "Subject - Object - Verb"},
-      {"value": "SVO", "label": "Subject - Verb - Object"},
-      {"value": "VSO", "label": "Verb - Subject - Object"},
-      {"value": "VOS", "label": "Verb - Object - Subject"},
-      {"value": "OVS", "label": "Object - Verb - Subject"},
-      {"value": "OSV", "label": "Object - Subject - Verb"}
+      {
+        "value": "SOV",
+        "label": "Subject - Object - Verb"
+      },
+      {
+        "value": "SVO",
+        "label": "Subject - Verb - Object"
+      },
+      {
+        "value": "VSO",
+        "label": "Verb - Subject - Object"
+      },
+      {
+        "value": "VOS",
+        "label": "Verb - Object - Subject"
+      },
+      {
+        "value": "OVS",
+        "label": "Object - Verb - Subject"
+      },
+      {
+        "value": "OSV",
+        "label": "Object - Subject - Verb"
+      }
     ]
   },
   {
@@ -90,10 +240,26 @@
     "input_type": "single_select",
     "maps_to": "language_preferences.morphological_type",
     "options": [
-      {"value": "isolating", "label": "Mostly short, unchanging words", "description": "Grammar is expressed with separate words, like Mandarin."},
-      {"value": "agglutinative", "label": "Words built from clear, stackable pieces", "description": "Each suffix has one meaning, like Turkish."},
-      {"value": "fusional", "label": "Endings that combine several meanings", "description": "One ending can mark case, number, and gender at once, like Latin."},
-      {"value": "polysynthetic", "label": "Very long words that can express whole sentences", "description": "Like Inuktitut."}
+      {
+        "value": "isolating",
+        "label": "Mostly short, unchanging words",
+        "description": "Grammar is expressed with separate words, like Mandarin."
+      },
+      {
+        "value": "agglutinative",
+        "label": "Words built from clear, stackable pieces",
+        "description": "Each suffix has one meaning, like Turkish."
+      },
+      {
+        "value": "fusional",
+        "label": "Endings that combine several meanings",
+        "description": "One ending can mark case, number, and gender at once, like Latin."
+      },
+      {
+        "value": "polysynthetic",
+        "label": "Very long words that can express whole sentences",
+        "description": "Like Inuktitut."
+      }
     ]
   },
   {
@@ -146,8 +312,17 @@
     "id": "custom_words",
     "category": "vocabulary",
     "prompt": "Are there any other words you want to define yourself?",
-    "help": "Pick a meaning and type the word, e.g. sea = nal. Your words are kept exactly as written.",
+    "help": "Pick a meaning and type the word, e.g. sea = nal. Your words are kept exactly as written. Use plain letters a-z; sh, ch, th, dh, zh and ng each count as one sound.",
     "input_type": "custom_vocabulary",
     "maps_to": "language_preferences.custom_words"
+  },
+  {
+    "id": "language_notes",
+    "category": "language",
+    "prompt": "Anything else about how you want the language?",
+    "help": "Any notes for the AI: how it should sound or feel, what it should have lots of words for, languages it should resemble...",
+    "input_type": "free_text",
+    "maps_to": "language_preferences.notes",
+    "always_ask": true
   }
 ]

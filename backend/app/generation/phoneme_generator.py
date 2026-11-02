@@ -65,7 +65,19 @@ def parse_spelling(spelling: str, phonology: Phonology | None = None) -> list[st
         known = {g: g for g in GRAPHEME_CATALOG}
     else:
         known = {p.grapheme: p.id for p in phonology.phonemes}
-    unsupported = sorted({ch for ch in normalized if ch not in known})
+    longest = max(map(len, known))
+    phonemes, unsupported, i = [], set(), 0
+    while i < len(normalized):
+        # Longest match first, so "sh" is read as one sound when the language has it.
+        for size in range(min(longest, len(normalized) - i), 0, -1):
+            piece = normalized[i:i + size]
+            if piece in known:
+                phonemes.append(known[piece])
+                i += size
+                break
+        else:
+            unsupported.add(normalized[i])
+            i += 1
     if unsupported or not normalized:
-        raise UnsupportedSpellingError(spelling, unsupported)
-    return [known[ch] for ch in normalized]
+        raise UnsupportedSpellingError(spelling, sorted(unsupported))
+    return phonemes

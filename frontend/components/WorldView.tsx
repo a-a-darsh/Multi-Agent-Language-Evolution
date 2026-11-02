@@ -1,4 +1,4 @@
-import { attitudeTone, humanize } from "@/lib/format";
+import { attitudeTone, formatYear, humanize } from "@/lib/format";
 import type { Civilization, World } from "@/lib/types";
 
 export function WorldView({ world }: { world: World }) {
@@ -64,6 +64,14 @@ function CivilizationFacts({ civ, showGenerated = true }: { civ: Civilization; s
     showGenerated && civ.generated_fields.includes(field) ? <span className="ai-tag">AI</span> : null;
   return (
     <dl className="facts">
+      {civ.era && (
+        <>
+          <dt>Era</dt>
+          <dd>
+            {humanize(civ.era)}, from {formatYear(civ.founding_year)} {ai("era")}
+          </dd>
+        </>
+      )}
       <dt>Land</dt>
       <dd>
         {humanize(civ.geography)} {ai("geography")}

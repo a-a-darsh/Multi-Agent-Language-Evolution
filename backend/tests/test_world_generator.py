@@ -90,7 +90,22 @@ def test_user_civilization_fields_preserved_and_rest_marked_generated():
     w = world(name="Savari", geography="coastal", cultural_traits=["religious"])
     focal = w.focal
     assert (focal.name, focal.geography, focal.cultural_traits) == ("Savari", "coastal", ["religious"])
-    assert focal.generated_fields == ["economy", "social_organization"]
+    assert focal.generated_fields == ["economy", "social_organization", "era", "founding_year"]
+
+
+def test_era_and_year_fill_each_other_in():
+    from app.models.eras import ERA_DEFAULT_YEAR
+    rng = random.Random(1)
+    assert complete_civilization(CivilizationProfile(era="medieval"), rng).founding_year == ERA_DEFAULT_YEAR["medieval"]
+    assert complete_civilization(CivilizationProfile(founding_year=-2500), rng).era == "bronze_age"
+    picked = complete_civilization(CivilizationProfile(), rng)
+    assert picked.era and picked.founding_year == ERA_DEFAULT_YEAR[picked.era]
+
+
+def test_neighbors_share_the_era():
+    w = world(seed=4, era="iron_age")
+    assert {c.era for c in w.civilizations} == {"iron_age"}
+    assert {c.founding_year for c in w.civilizations} == {w.focal.founding_year}
 
 
 def test_complete_civilization_follows_geography_tables():

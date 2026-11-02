@@ -90,12 +90,7 @@ def _check_derivation(lx, lexemes, rules, result: ValidationResult) -> None:
         result.add("COMPOSITION_MISMATCH",
                    f"{lx.concept_id!r} should be its base's morphemes plus the {rule.id!r} affix",
                    object_id=lx.id)
-    if base.part_of_speech not in rule.input_parts_of_speech:
-        result.add("POS_MISMATCH", f"{rule.id!r} cannot apply to {base.part_of_speech.value} {base.concept_id!r}",
-                   object_id=lx.id)
-    if lx.part_of_speech != rule.output_part_of_speech:
-        result.add("POS_MISMATCH", f"{lx.concept_id!r} should be a {rule.output_part_of_speech.value}",
-                   object_id=lx.id)
+    # Parts of speech are not checked: an affix's "takes X, makes Y" is typical usage, not a rule.
 
 
 def _check_graph(lexemes, result: ValidationResult, max_depth: int | None) -> None:

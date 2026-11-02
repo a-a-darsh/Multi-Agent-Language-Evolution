@@ -20,6 +20,7 @@ class PartOfSpeech(StrEnum):
 class ConceptPriority(StrEnum):
     CORE = "core"
     CULTURAL = "cultural"
+    USER = "user"  # a meaning the user invented for one of their own words
 
 
 class SemanticConcept(DomainModel):
@@ -30,8 +31,10 @@ class SemanticConcept(DomainModel):
     part_of_speech: PartOfSpeech
     categories: list[str] = Field(default_factory=list)
     priority: ConceptPriority
-    # For cultural concepts: which civilization traits make this concept likely.
+    # For cultural concepts: which civilization traits (or eras) make this concept likely.
     cultural_tags: list[str] = Field(default_factory=list)
+    # Earliest era in which the concept exists (e.g. coin: iron_age). None = every era.
+    min_era: str | None = None
 
 
 class LexemeOrigin(StrEnum):

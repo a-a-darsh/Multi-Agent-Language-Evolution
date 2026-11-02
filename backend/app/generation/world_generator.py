@@ -27,10 +27,12 @@ from app.models.civilization import (
     World,
 )
 from app.models.common import DomainModel
+from app.models.eras import ERA_DEFAULT_YEAR, era_for_year
 from app.models.generation import CivilizationProfile, GenerationRequest
 from app.models.phonology import Phoneme, Phonology
 
-DEFAULT_FOUNDING_YEAR = -1000
+# When the user leaves the era to the AI: ancient eras are the natural start for a long history.
+ERA_WEIGHTS = {"stone_age": 1, "bronze_age": 3, "iron_age": 3, "classical": 2, "medieval": 1, "early_modern": 0.5}
 
 Weights = dict[str, float]
 
@@ -73,7 +75,7 @@ class WorldGenerationConfig(DomainModel):
 
 @cache
 def load_world_config() -> WorldGenerationConfig:
-    raw = json.loads((DATA_DIR / "world_generation.json").read_text(encoding="utf-8"))
+    raw = json.loads((DATA_DIR / "world_generation.json").read_text(encoding="utf-8-sig"))
     return WorldGenerationConfig.model_validate(raw)
 
 
@@ -128,12 +130,14 @@ def _unique_name(rng: random.Random, phonology: Phonology, taken: set[str]) -> s
 def complete_civilization(
     profile: CivilizationProfile,
     rng: random.Random,
-    founding_year: int = DEFAULT_FOUNDING_YEAR,
+    founding_year: int | None = None,
     config: WorldGenerationConfig | None = None,
 ) -> Civilization:
     """Fill every field the user left empty; user-given values are kept as is."""
     config = config or load_world_config()
     generated: list[str] = []
+    if founding_year is not None:  # explicit override (e.g. scripts and tests)
+        profile = profile.model_copy(update={"founding_year": founding_year})
 
     def fill(field: str, value_if_missing):
         current = getattr(profile, field)
@@ -148,7 +152,14 @@ def complete_civilization(
                   lambda: _weighted(rng, config.social_organization_by_economy[economy]))
     traits = fill("cultural_traits", lambda: _sample_traits(rng, economy, config))
     name = fill("name", lambda: generate_name(rng))
-    return Civilization(name=name, founding_year=founding_year, geography=geography, economy=economy,
+    # Era and year: a given year implies its era; a given era implies a typical year.
+    # Drawn last so adding eras didn't change the other fields for existing seeds.
+    year = profile.founding_year
+    era = fill("era", lambda: era_for_year(year) if year is not None else _weighted(rng, ERA_WEIGHTS))
+    if year is None:
+        generated.append("founding_year")
+        year = ERA_DEFAULT_YEAR[era]
+    return Civilization(name=name, founding_year=year, era=era, geography=geography, economy=economy,
                         social_organization=social, cultural_traits=traits,
                         description=profile.description, generated_fields=generated)
 
@@ -163,6 +174,7 @@ def generate_neighbor(
     neighbor = Civilization(
         name=_unique_name(rng, phonology, taken_names),
         founding_year=focal.founding_year,
+        era=focal.era,  # neighbors live in the same time
         geography=geography,
         economy=economy,
         social_organization=_weighted(rng, config.social_organization_by_economy[economy]),
@@ -260,7 +272,7 @@ def generate_relationship(rng: random.Random, focal: Civilization, neighbor: Civ
 
 def generate_world(
     request: GenerationRequest,
-    founding_year: int = DEFAULT_FOUNDING_YEAR,
+    founding_year: int | None = None,
     neighbor_count: int | None = None,
     config: WorldGenerationConfig | None = None,
 ) -> World:

@@ -78,7 +78,7 @@ class SettingsStore:
     def load(self) -> LLMSettings | None:
         if not self.path.exists():
             return None
-        return LLMSettings.model_validate_json(self.path.read_text(encoding="utf-8"))
+        return LLMSettings.model_validate_json(self.path.read_text(encoding="utf-8-sig"))
 
     def save(self, settings: LLMSettings) -> None:
         data = settings.model_dump(mode="json")

@@ -9,6 +9,7 @@ class InputType(StrEnum):
     SINGLE_SELECT = "single_select"
     MULTI_SELECT = "multi_select"
     FREE_TEXT = "free_text"
+    SHORT_TEXT = "short_text"  # single line, e.g. a name
     YES_NO = "yes_no"
     # One word for a fixed concept; maps_to ends in the concept id.
     CUSTOM_WORD = "custom_word"
@@ -30,6 +31,10 @@ class Question(DomainModel):
     input_type: InputType
     options: list[QuestionOption] = Field(default_factory=list)
     required: bool = False
+    # Shown in every session, outside the random selection (e.g. the civilization's name).
+    always_ask: bool = False
+    # Selects offer "describe your own": free text instead of (or as well as) the options.
+    allow_custom: bool = True
     # Dotted path into GenerationRequest where the answer is stored,
     # e.g. "civilization.geography". Keeps the question bank config-driven.
     maps_to: str

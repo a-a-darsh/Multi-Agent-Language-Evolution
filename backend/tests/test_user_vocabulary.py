@@ -12,6 +12,13 @@ def test_requirements_inferred_from_words():
     assert not reqs.requires_hiatus
 
 
+def test_digraph_words_are_supported():
+    reqs, result = analyze_user_words({"water": "shira", "song": "ngatha"})
+    assert result.ok
+    assert {"sh", "ng", "th"} <= set(reqs.required_phonemes)
+    assert reqs.words[0].syllable_patterns == ["CV", "CV"]
+
+
 def test_vowel_initial_and_hiatus_detected():
     reqs, result = analyze_user_words({"song": "aria"})
     assert result.ok
@@ -29,9 +36,10 @@ def test_unsupported_words_reported():
     assert sorted(i.code for i in result.errors) == ["UNSUPPORTED_GRAPHEME", "UNSUPPORTED_SYLLABLE_STRUCTURE"]
 
 
-def test_duplicate_user_forms_reported():
+def test_same_word_for_two_meanings_is_allowed():
+    # Intentional polysemy (kijur = zinc, wealth): noted, not an error.
     _, result = analyze_user_words({"water": "mari", "sea": "mari"})
-    assert [i.code for i in result.errors] == ["DUPLICATE_USER_FORM"]
+    assert result.ok and [i.code for i in result.issues] == ["USER_POLYSEMY"]
 
 
 def test_conflicting_fixture_is_caught():

@@ -33,7 +33,7 @@ class EventError(ValueError):
 
 @cache
 def load_event_catalog() -> EventCatalog:
-    raw = json.loads((DATA_DIR / "events.json").read_text(encoding="utf-8"))
+    raw = json.loads((DATA_DIR / "events.json").read_text(encoding="utf-8-sig"))
     return EventCatalog.model_validate(raw)
 
 

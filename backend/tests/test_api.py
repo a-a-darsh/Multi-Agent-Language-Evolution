@@ -9,7 +9,9 @@ def test_questionnaire_is_reproducible_by_seed():
     first = client.get("/api/questionnaire", params={"seed": 5}).json()
     second = client.get("/api/questionnaire", params={"seed": 5}).json()
     assert first == second
-    assert first["seed"] == 5 and len(first["questions"]) == 5
+    ids = [q["id"] for q in first["questions"]]
+    assert first["seed"] == 5 and len(ids) == 8  # 5 random + name + era + notes
+    assert ids[0] == "civilization_name" and ids[-1] == "language_notes"
 
 
 def test_questionnaire_without_seed_assigns_one():

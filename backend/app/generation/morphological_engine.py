@@ -197,8 +197,14 @@ class MorphologyEngine:
 
     # --- derivation ---------------------------------------------------------
 
-    def derive(self, base_lexeme_id: str, rule_id: str, concept_id: str, gloss: str) -> Lexeme:
-        """Apply a derivational rule to an existing lexeme, or raise with the reason it can't be done."""
+    def derive(self, base_lexeme_id: str, rule_id: str, concept_id: str, gloss: str,
+               part_of_speech: PartOfSpeech | None = None) -> Lexeme:
+        """Apply a derivational rule to an existing lexeme, or raise with the reason it can't be done.
+
+        Any affix may attach to any word: the rule's parts of speech are typical usage, not
+        a constraint (enforcing them blocked natural words like wave = water + movement).
+        The new word's part of speech is the concept's, falling back to the rule's usual output.
+        """
         base = self.lexemes.get(base_lexeme_id)
         if base is None:
             raise _fail("UNKNOWN_BASE", f"No lexeme {base_lexeme_id!r} to derive {concept_id!r} from",
@@ -207,11 +213,6 @@ class MorphologyEngine:
         if rule is None:
             raise _fail("UNKNOWN_RULE", f"No derivational rule {rule_id!r}", object_id=concept_id,
                         details={"available_rules": sorted(self.rules)})
-        if base.part_of_speech not in rule.input_parts_of_speech:
-            raise _fail("POS_MISMATCH",
-                        f"Rule {rule_id!r} applies to {[p.value for p in rule.input_parts_of_speech]}, "
-                        f"but {base.concept_id!r} is {_article(base.part_of_speech.value)} {base.part_of_speech.value}",
-                        object_id=concept_id, details={"base": base.concept_id, "rule": rule_id})
         if (depth := self.depth(base.id) + 1) > self.max_depth:
             raise _fail("DERIVATION_TOO_DEEP",
                         f"{concept_id!r} would be {depth} derivations from a root (max {self.max_depth})",
@@ -227,7 +228,8 @@ class MorphologyEngine:
         self._reserve(assembly.phonemes, lexeme_id, "derived", concept_id)
         lexeme = Lexeme(
             id=lexeme_id, language_id=self.language_id, concept_id=concept_id,
-            part_of_speech=rule.output_part_of_speech, origin=LexemeOrigin.DERIVED, morpheme_ids=morpheme_ids,
+            part_of_speech=part_of_speech or rule.output_part_of_speech, origin=LexemeOrigin.DERIVED,
+            morpheme_ids=morpheme_ids,
             senses=[LexicalSense(concept_id=concept_id, gloss=gloss)],
             derivation=Derivation(output_lexeme_id=lexeme_id, base_lexeme_id=base.id, rule_id=rule.id,
                                   applied_morpheme_ids=[affix.id]),
@@ -264,7 +266,7 @@ class MorphologyEngine:
                         f"{''.join(phonemes)!r} for {concept_id!r} is already the word for "
                         f"{owner.concept_id if owner else e.existing.owner_kind!r}",
                         object_id=concept_id,
-                        details={"form": "".join(phonemes),
+                        details={"form": "".join(phonemes), "phonemes": list(phonemes),
                                  "existing_concept": owner.concept_id if owner else None}) from e
 
     def _store(self, lexeme: Lexeme, assembly: AssemblyResult) -> None:

@@ -10,6 +10,8 @@ class Civilization(DomainModel):
     id: str = Field(default_factory=new_id)
     name: str
     founding_year: int
+    # Technology level (see models/eras.py). None only for languages saved before eras existed.
+    era: str | None = None
     geography: str
     economy: str
     social_organization: str | None = None

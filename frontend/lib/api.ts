@@ -1,11 +1,18 @@
 import type {
   Answers,
   ApiErrorBody,
+  EntryDetail,
+  EntryPage,
+  GenerationLog,
+  GenerationSummary,
+  LanguageOverview,
+  LanguageSummary,
   LLMConnection,
   LLMSettingsView,
+  NewConcept,
   Questionnaire,
   SemanticConcept,
-  WorldGenerationResponse,
+  World,
 } from "./types";
 
 export class ApiError extends Error {
@@ -56,6 +63,50 @@ export function saveLlmSettings(connection: LLMConnection & { model: string }): 
   return request("/api/settings/llm", { method: "PUT", body: JSON.stringify(connection) });
 }
 
-export function generateWorld(seed: number, answers: Answers): Promise<WorldGenerationResponse> {
-  return request("/api/worlds", { method: "POST", body: JSON.stringify({ seed, answers }) });
+export function startGeneration(
+  seed: number,
+  answers: Answers,
+  customAnswers: Record<string, string>,
+  newConcepts: NewConcept[],
+  derivedRatio: number,
+): Promise<{ generation_id: string }> {
+  return request("/api/generations", {
+    method: "POST",
+    body: JSON.stringify({
+      seed, answers, custom_answers: customAnswers, new_concepts: newConcepts, derived_ratio: derivedRatio,
+    }),
+  });
+}
+
+export function getGeneration(id: string): Promise<GenerationSummary> {
+  return request(`/api/generations/${id}`);
+}
+
+export function listLanguages(): Promise<LanguageSummary[]> {
+  return request("/api/languages");
+}
+
+export function getLanguage(id: string): Promise<LanguageOverview> {
+  return request(`/api/languages/${id}`);
+}
+
+export function getLanguageWorld(id: string): Promise<World> {
+  return request(`/api/languages/${id}/world`);
+}
+
+export function getGenerationLog(id: string): Promise<GenerationLog> {
+  return request(`/api/languages/${id}/generation`);
+}
+
+export function searchDictionary(
+  id: string,
+  params: { q?: string; pos?: string; origin?: string; page?: number; page_size?: number },
+): Promise<EntryPage> {
+  const query = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== "") query.set(k, String(v));
+  return request(`/api/languages/${id}/dictionary?${query}`);
+}
+
+export function getEntry(id: string, lexemeId: string): Promise<EntryDetail> {
+  return request(`/api/languages/${id}/dictionary/${lexemeId}`);
 }

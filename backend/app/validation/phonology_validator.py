@@ -9,7 +9,8 @@ cannot be syllabified under CV/CVC.
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 
-from app.models.phonology import Phonology, PhonemeClass, Position
+from app.generation.phoneme_generator import parse_spelling, render_phonemes
+from app.models.phonology import DIGRAPHS, Phonology, PhonemeClass, Position
 from app.models.validation import ValidationResult
 
 
@@ -107,6 +108,15 @@ def validate_phoneme_sequence(
                 result.add("HIATUS_NOT_ALLOWED", f"{form!r} has adjacent vowels /{a}{b}/",
                            object_id=object_id, details={"form": form, "sequence": a + b})
                 break
+
+    # With digraphs, s + h is written "sh" and would be read back as /ʃ/. A form is
+    # only legal if its spelling reads back to exactly the same sounds.
+    if any(p.grapheme in DIGRAPHS for p in phonology.phonemes):
+        spelled = render_phonemes(phonemes, phonology)
+        if parse_spelling(spelled, phonology) != list(phonemes):
+            result.add("AMBIGUOUS_SPELLING",
+                       f"{'+'.join(phonemes)} would be written {spelled!r}, which reads as different sounds",
+                       object_id=object_id, details={"form": spelled, "phonemes": list(phonemes)})
 
     candidates = _parse_candidates(phonemes, phonology)
     if not candidates:

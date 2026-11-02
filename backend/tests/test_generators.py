@@ -19,7 +19,8 @@ from tests.factories import sample_phonology
 @st.composite
 def phonologies(draw) -> Phonology:
     """Random but valid phonologies, to check generator/validator agreement broadly."""
-    consonants = draw(st.lists(st.sampled_from("ptkbdgmnslrvfhwy"), min_size=2, max_size=12, unique=True))
+    consonants = draw(st.lists(st.sampled_from([*"ptkbdgmnslrvfhwyc", "sh", "ch", "th", "ng", "zh"]),
+                               min_size=2, max_size=12, unique=True))
     vowels = draw(st.lists(st.sampled_from("aeiou"), min_size=1, max_size=5, unique=True))
     patterns = draw(st.lists(st.sampled_from(sorted(SUPPORTED_PATTERNS)), min_size=1, max_size=4, unique=True))
     # Forbid one consonant somewhere, keeping at least one consonant free for every slot.
@@ -63,6 +64,16 @@ def test_spelling_round_trip():
     with pytest.raises(UnsupportedSpellingError) as exc:
         parse_spelling("nal-ka", phonology)
     assert exc.value.unsupported == ["-"]
+
+
+def test_digraphs_are_single_sounds():
+    assert parse_spelling("shira") == ["sh", "i", "r", "a"]
+    assert parse_spelling("ngacha") == ["ng", "a", "ch", "a"]
+    # A language without /ʃ/ reads the same letters as two sounds.
+    no_sh = sample_phonology(phonemes=[Phoneme.from_grapheme(g) for g in [*"shira"]], restrictions=[])
+    assert parse_spelling("shira", no_sh) == ["s", "h", "i", "r", "a"]
+    with_sh = sample_phonology(phonemes=[Phoneme.from_grapheme(g) for g in ["sh", "r", "i", "a"]], restrictions=[])
+    assert render_phonemes(["sh", "i", "r", "a"], with_sh) == "shira"
 
 
 def test_registry_generates_unique_reproducible_roots():
