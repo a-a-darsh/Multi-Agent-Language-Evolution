@@ -145,7 +145,7 @@ export interface LanguageSummary {
   created_at: string;
 }
 
-export type Origin = "user_defined" | "generated_root" | "derived";
+export type Origin = "user_defined" | "generated_root" | "derived" | "compound";
 
 export interface EntrySummary {
   id: string;
@@ -162,6 +162,7 @@ export interface EntryDetail extends EntrySummary {
   syllables: string[];
   derived_from: EntrySummary | null;
   rule: { id: string; name: string; meaning: string } | null;
+  compound_of: EntrySummary[];
   derived_words: EntrySummary[];
   family_root: EntrySummary;
   family: EntrySummary[];

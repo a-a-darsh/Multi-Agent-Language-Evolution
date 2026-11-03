@@ -857,7 +857,8 @@ a.button {
   align-self: center;
 }
 
-.origin.derived {
+.origin.derived,
+.origin.compound {
   background: var(--accent-soft);
   color: var(--accent);
 }

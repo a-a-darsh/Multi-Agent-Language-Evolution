@@ -6,6 +6,7 @@ from app.models.grammar import Grammar
 from app.models.lexicon import Lexeme, LexemeForm
 from app.models.morphology import BoundaryRepair, DerivationalRule, Morpheme
 from app.models.phonology import Phonology
+from app.models.sound_change import SoundChange, SoundChangeException
 
 
 class Language(DomainModel):
@@ -34,6 +35,11 @@ class LanguageVersion(DomainModel):
     phonology: Phonology
     grammar: Grammar
     boundary_repair: BoundaryRepair | None = None
+    # The sound changes that turned the predecessor version into this one, in order.
+    # Empty for the founding version.
+    sound_changes: list[SoundChange] = Field(default_factory=list)
+    # Words that resisted one of those changes (see SoundChangeException).
+    exceptions: list[SoundChangeException] = Field(default_factory=list)
 
 
 class LanguageState(DomainModel):
@@ -42,6 +48,8 @@ class LanguageState(DomainModel):
     civilization: Civilization
     language: Language
     version: LanguageVersion
+    # Earlier versions, oldest first. Their forms stay in `forms`, so every word's history is kept.
+    previous_versions: list[LanguageVersion] = Field(default_factory=list)
     summary: str | None = None
     morphemes: list[Morpheme] = Field(default_factory=list)
     derivational_rules: list[DerivationalRule] = Field(default_factory=list)

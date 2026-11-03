@@ -10,7 +10,7 @@ from collections.abc import Iterable
 
 from pydantic import Field
 
-from app.agents.dictionary_schema import PlanEntry, SenseExtension
+from app.agents.dictionary_schema import CompoundEntry, PlanEntry, Planned, SenseExtension
 from app.generation.morphological_engine import MorphologyEngine, MorphologyError
 from app.generation.root_generator import RootRegistry
 from app.generation.user_vocabulary import UserWord
@@ -18,10 +18,29 @@ from app.models.civilization import Civilization
 from app.models.common import DomainModel
 from app.models.design import LanguageDesign
 from app.models.language import Language, LanguageState, LanguageVersion
-from app.models.lexicon import LexicalSense, SemanticConcept
+from app.models.lexicon import ConceptPriority, LexicalSense, PartOfSpeech, SemanticConcept
 from app.models.validation import Severity, ValidationIssue
 
 MAX_DERIVATION_DEPTH = 2
+# Words that never make sense as compound parts: function words ("trade + in" for market) and
+# numbers or quantities, which the model used as filler endings (black = night + one, hot = fire + many).
+GRAMMATICAL_POS = {PartOfSpeech.ADPOSITION, PartOfSpeech.PARTICLE, PartOfSpeech.PRONOUN,
+                   PartOfSpeech.INTERJECTION, PartOfSpeech.NUMERAL}
+NON_PART_CATEGORIES = {"numbers", "quantity", "deixis", "questions", "function", "pronouns", "relations"}
+# A word that is part of very many compounds is being used as a filler, not for its meaning
+# ("one" was in 12). Words like house or person are legitimately in several (market, palace...).
+MAX_COMPOUNDS_PER_PART = 8
+
+
+def is_basic_vocabulary(concept: SemanticConcept) -> bool:
+    """Core concepts (body parts, nature, numbers, colors, basic actions, kinship...). Real languages
+    don't build them as compounds (black is not night + one), though an affix may derive a few
+    (bad = not + good, like English unhappy)."""
+    return concept.priority == ConceptPriority.CORE
+
+
+def _not_a_part(concept: SemanticConcept) -> bool:
+    return concept.part_of_speech in GRAMMATICAL_POS or bool(NON_PART_CATEGORIES & set(concept.categories))
 # Extra candidates for derivations that fall back to roots, and for re-rolls.
 CANDIDATE_MARGIN = 80
 MAX_REROLL_PASSES = 3
@@ -39,11 +58,12 @@ def _issue(code: str, concept_id: str, message: str, **details) -> ValidationIss
     return ValidationIssue(code=code, object_id=concept_id, message=message, details=details)
 
 
-def check_plan(plan: Iterable[PlanEntry], concepts: dict[str, SemanticConcept], design: LanguageDesign,
-               user_concepts: set[str]) -> tuple[list[PlanEntry], dict[str, ValidationIssue], list[ValidationIssue]]:
-    """Plan-level checks that need no word forms. Returns (usable entries, failures, notes)."""
+def check_plan(plan: Iterable[Planned], concepts: dict[str, SemanticConcept], design: LanguageDesign,
+               user_concepts: set[str]) -> tuple[list[Planned], dict[str, ValidationIssue], list[ValidationIssue]]:
+    """Plan-level checks that need no word forms, for derivations and compounds.
+    Returns (usable entries, failures, notes)."""
     rules = {r.id: r for r in design.derivational_rules}
-    usable: dict[str, PlanEntry] = {}
+    usable: dict[str, Planned] = {}
     failures: dict[str, ValidationIssue] = {}
     notes: list[ValidationIssue] = []
 
@@ -51,11 +71,35 @@ def check_plan(plan: Iterable[PlanEntry], concepts: dict[str, SemanticConcept], 
         if e.concept_id in user_concepts:
             # The user's word is authoritative; dropping the derivation is the only valid fix.
             notes.append(_issue("USER_WORD_KEPT", e.concept_id, f"{e.concept_id!r} keeps the user's own word "
-                                f"instead of being derived from {e.base_concept_id!r}"))
+                                f"instead of being built as {e.describe()}"))
             continue
         if e.concept_id in usable or e.concept_id in failures:
             notes.append(_issue("DUPLICATE_PLAN_ENTRY", e.concept_id, f"{e.concept_id!r} was planned twice; "
                                 "the first entry was used"))
+            continue
+        if isinstance(e, CompoundEntry) and e.concept_id in concepts and is_basic_vocabulary(concepts[e.concept_id]):
+            # Only one correct fix (its own root), so code makes it without a repair round.
+            notes.append(_issue("BASIC_WORD_KEPT_AS_ROOT", e.concept_id, f"{e.concept_id!r} is basic vocabulary, "
+                                f"so it keeps its own root instead of being the compound {e.describe()}"))
+            continue
+        if isinstance(e, CompoundEntry):
+            if e.concept_id not in concepts or any(b not in concepts for b in e.bases):
+                failures[e.concept_id] = _issue("UNKNOWN_REFERENCE", e.concept_id,
+                                                f"{e.concept_id!r} references an unknown concept")
+            elif e.concept_id in e.bases:
+                failures[e.concept_id] = _issue("SELF_DERIVATION", e.concept_id,
+                                                f"{e.concept_id!r} cannot be a compound of itself")
+            elif e.first_concept_id == e.second_concept_id:
+                failures[e.concept_id] = _issue("SELF_COMPOUND", e.concept_id,
+                                                f"{e.concept_id!r} joins {e.first_concept_id!r} with itself")
+            elif grammatical := [b for b in e.bases if _not_a_part(concepts[b])]:
+                failures[e.concept_id] = _issue(
+                    "GRAMMATICAL_COMPOUND_PART", e.concept_id,
+                    f"{e.concept_id} = {e.describe()} uses {', '.join(grammatical)} as a part. Numbers, quantities "
+                    "and function words can't be compound parts; use parts that are things, actions or qualities, "
+                    "or an independent root")
+            else:
+                usable[e.concept_id] = e
             continue
         concept, base, rule = concepts.get(e.concept_id), concepts.get(e.base_concept_id), rules.get(e.rule_id)
         if concept is None or base is None or rule is None:
@@ -63,38 +107,73 @@ def check_plan(plan: Iterable[PlanEntry], concepts: dict[str, SemanticConcept], 
                                             f"{e.concept_id!r} references an unknown concept or rule")
         elif e.base_concept_id == e.concept_id:
             failures[e.concept_id] = _issue("SELF_DERIVATION", e.concept_id, f"{e.concept_id!r} cannot derive from itself")
+        elif concept.part_of_speech != rule.output_part_of_speech:
+            # What an affix MAKES is part of its meaning: the person affix makes a person (a noun), so
+            # buy = trade + person is wrong. (What it attaches TO is only guidance: wave = water + movement.)
+            failures[e.concept_id] = _issue(
+                "AFFIX_WRONG_RESULT", e.concept_id,
+                f"{e.concept_id} = {e.describe()}, but the {rule.id} affix makes a {rule.output_part_of_speech.value} "
+                f"({rule.meaning}) and {e.concept_id} is a {concept.part_of_speech.value}. Use a fitting affix, a "
+                "compound, or an independent root")
         else:
-            # No part-of-speech gate. An affix's "takes X, makes Y" is typical usage, not a law:
-            # enforcing it blocked natural words like wave = water + movement. The new word
-            # takes the concept's part of speech, and the critic judges whether the meaning works.
             usable[e.concept_id] = e
 
-    # Same base + same rule = the same word for two meanings.
-    composed: dict[tuple[str, str], str] = {}
+    # Same parts = the same word for two meanings.
+    composed: dict[tuple[str, ...], str] = {}
     for concept_id, e in list(usable.items()):
-        key = (e.base_concept_id, e.rule_id)
+        key = tuple(e.bases) + ((e.rule_id,) if isinstance(e, PlanEntry) else ("+",))
         if key in composed:
             failures[concept_id] = _issue(
                 "SAME_COMPOSITION", concept_id,
-                f"{concept_id} and {composed[key]} are both {e.base_concept_id} + {e.rule_id}, which would be "
-                f"the same word. Build {concept_id} differently or give it an independent root")
+                f"{concept_id} and {composed[key]} are both {e.describe()}, which would be the same word. "
+                f"Build {concept_id} differently or give it an independent root")
             del usable[concept_id]
         else:
             composed[key] = concept_id
 
-    # Cycles and depth, following base links through usable entries only.
+    # Overused parts: beyond MAX_COMPOUNDS_PER_PART, a part is filler. Later entries fail (deterministic order).
+    uses: dict[str, int] = {}
+    for concept_id, e in list(usable.items()):
+        if not isinstance(e, CompoundEntry):
+            continue
+        over = [b for b in e.bases if uses.get(b, 0) >= MAX_COMPOUNDS_PER_PART]
+        if over:
+            failures[concept_id] = _issue(
+                "OVERUSED_PART", concept_id,
+                f"{concept_id} = {e.describe()}: {', '.join(over)} is already part of {MAX_COMPOUNDS_PER_PART} "
+                "compounds. Use a part that says something specific about this concept, or an independent root")
+            del usable[concept_id]
+            continue
+        for b in e.bases:
+            uses[b] = uses.get(b, 0) + 1
+
+    # Cycles and depth, following base links (derivation bases and compound parts) through usable entries.
     for concept_id in list(usable):
-        seen, current = [concept_id], usable[concept_id].base_concept_id
-        while current in usable and current not in seen:
-            seen.append(current)
-            current = usable[current].base_concept_id
-        if current in seen:
-            failures[concept_id] = _issue("DERIVATION_CYCLE", concept_id,
-                                          f"{' -> '.join([*seen, current])} is a cycle")
-        elif len(seen) > MAX_DERIVATION_DEPTH:
-            failures[concept_id] = _issue("DERIVATION_TOO_DEEP", concept_id,
-                                          f"{' <- '.join(seen)} is more than {MAX_DERIVATION_DEPTH} steps from a root")
+        if (problem := _graph_problem(concept_id, usable)) is not None:
+            failures[concept_id] = problem
     return [e for c, e in usable.items() if c not in failures], failures, notes
+
+
+def _graph_problem(concept_id: str, usable: dict[str, Planned]) -> ValidationIssue | None:
+    def walk(current: str, path: list[str]) -> ValidationIssue | None:
+        for base in usable[current].bases:
+            if base in path:
+                return _issue("DERIVATION_CYCLE", concept_id, f"{' -> '.join([*path, base])} is a cycle")
+            if base in usable and (problem := walk(base, [*path, base])):
+                return problem
+        return None
+
+    if (cycle := walk(concept_id, [concept_id])) is not None:
+        return cycle
+    if (depth := _depth(concept_id, usable)) > MAX_DERIVATION_DEPTH:
+        return _issue("DERIVATION_TOO_DEEP", concept_id,
+                      f"{concept_id} is {depth} building steps from a root (max {MAX_DERIVATION_DEPTH})")
+    return None
+
+
+def _depth(concept_id: str, usable: dict[str, Planned]) -> int:
+    """Building steps from the roots; only call on acyclic entries."""
+    return 1 + max((_depth(b, usable) for b in usable[concept_id].bases if b in usable), default=0)
 
 
 def check_extensions(extensions: Iterable[SenseExtension], concepts: dict[str, SemanticConcept],
@@ -133,18 +212,14 @@ def check_extensions(extensions: Iterable[SenseExtension], concepts: dict[str, S
     return list(usable.values()), failures, notes
 
 
-def _depth_order(entries: list[PlanEntry]) -> list[PlanEntry]:
-    """Bases before the words built on them."""
+def _depth_order(entries: list[Planned]) -> list[Planned]:
+    """Bases and parts before the words built on them."""
     by_concept = {e.concept_id: e for e in entries}
-
-    def depth(e: PlanEntry) -> int:
-        return 1 + depth(by_concept[e.base_concept_id]) if e.base_concept_id in by_concept else 1
-
-    return sorted(entries, key=depth)
+    return sorted(entries, key=lambda e: _depth(e.concept_id, by_concept))
 
 
 def build_dictionary(design: LanguageDesign, civilization: Civilization, concepts: list[SemanticConcept],
-                     user_words: list[UserWord], plan: Iterable[PlanEntry], seed: int,
+                     user_words: list[UserWord], plan: Iterable[Planned], seed: int,
                      founding_year: int | None = None,
                      extensions: Iterable[SenseExtension] = ()) -> BuildResult:
     plan = list(plan)
@@ -157,12 +232,12 @@ def build_dictionary(design: LanguageDesign, civilization: Civilization, concept
     # A shared word has no word of its own to build from. (Found live: "sky" shared the word for
     # "god", and another word was then built on "sky" -> KeyError.) Point to the real word instead.
     shares = {x.concept_id: x.base_concept_id for x in shared}
-    for e in [e for e in entries if e.base_concept_id in shares]:
-        failures[e.concept_id] = _issue(
-            "BASE_IS_SHARED_WORD", e.concept_id,
-            f"{e.concept_id} = {e.base_concept_id} + {e.rule_id}, but {e.base_concept_id} uses the word for "
-            f"{shares[e.base_concept_id]}. Build it from {shares[e.base_concept_id]} instead, or give it an "
-            "independent root")
+    for e in entries:
+        if borrowed := next((b for b in e.bases if b in shares), None):
+            failures[e.concept_id] = _issue(
+                "BASE_IS_SHARED_WORD", e.concept_id,
+                f"{e.concept_id} = {e.describe()}, but {borrowed} uses the word for {shares[borrowed]}. "
+                f"Build it from {shares[borrowed]} instead, or give it an independent root")
     entries = [e for e in entries if e.concept_id not in failures]
 
     blocked: set[tuple[str, ...]] = set()
@@ -235,13 +310,18 @@ def _build_once(design, civilization, concepts, user_words, entries, seed, found
     for c in root_concepts:
         assign_root(c)
 
-    # 3. Derivations, bases first. A failure becomes a root immediately, so words built on it still work.
+    # 3. Derivations and compounds, bases first. A failure becomes a root immediately, so words
+    #    built on it still work.
     collisions: set[tuple[str, ...]] = set()
     for e in _depth_order(entries):
         c = by_id[e.concept_id]
         try:
-            lexeme_of[c.id] = engine.derive(lexeme_of[e.base_concept_id], e.rule_id, c.id, c.gloss,
-                                            part_of_speech=c.part_of_speech).id
+            if isinstance(e, CompoundEntry):
+                lexeme_of[c.id] = engine.compound([lexeme_of[b] for b in e.bases], c.id, c.gloss,
+                                                  part_of_speech=c.part_of_speech).id
+            else:
+                lexeme_of[c.id] = engine.derive(lexeme_of[e.base_concept_id], e.rule_id, c.id, c.gloss,
+                                                part_of_speech=c.part_of_speech).id
         except MorphologyError as err:
             issue = err.result.errors[0]
             # Use the phoneme list, not the spelled form: "sh" is one phoneme but two letters.
@@ -249,7 +329,7 @@ def _build_once(design, civilization, concepts, user_words, entries, seed, found
             if issue.code == "DUPLICATE_FORM" and clashing in roots_by_form:
                 collisions.add(clashing)
             failures[c.id] = issue.model_copy(update={
-                "message": f"{c.id} = {e.base_concept_id} + {e.rule_id}: {issue.message}", "object_id": c.id})
+                "message": f"{c.id} = {e.describe()}: {issue.message}", "object_id": c.id})
             assign_root(c)
 
     # 4. Shared words: the concept becomes an extra sense of its base's word (after derivations,

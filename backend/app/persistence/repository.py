@@ -15,6 +15,7 @@ from app.models.language import LanguageState
 from app.models.lexicon import LexemeOrigin
 from app.models.validation import ValidationIssue
 from app.persistence.database import GenerationRow, LanguageRow
+from app.persistence.migrations import upgrade_language_state, upgrade_world
 
 GenerationStatus = Literal["queued", "running", "succeeded", "failed"]
 
@@ -84,6 +85,10 @@ class StoredLanguage(DomainModel):
     generation_id: str
 
 
+class StaleLanguageError(Exception):
+    """The language changed since it was read; the caller must reload and retry."""
+
+
 class Repository:
     def __init__(self, sessions: sessionmaker):
         self.sessions = sessions
@@ -118,7 +123,7 @@ class Repository:
             s.add(LanguageRow(
                 id=state.language.id, name=state.language.name, civilization_name=state.civilization.name,
                 entry_count=len(state.lexemes),
-                derived_count=sum(lx.origin == LexemeOrigin.DERIVED for lx in state.lexemes),
+                derived_count=sum(bool(lx.base_lexeme_ids) for lx in state.lexemes),  # affix or compound
                 generation_id=gid, state_json=state.model_dump_json(), world_json=world.model_dump_json()))
             row = s.get(GenerationRow, gid)
             row.status, row.language_id, row.outcome_json = "succeeded", state.language.id, outcome.model_dump_json()
@@ -155,10 +160,31 @@ class Repository:
                                     entry_count=r.entry_count, derived_count=r.derived_count,
                                     created_at=r.created_at.isoformat()) for r in rows]
 
+    def save_language_state(self, state: LanguageState, expected_version_id: str) -> None:
+        """Replace a language's state (e.g. after a sound change or a new word).
+
+        `expected_version_id` is the version the caller started from. If the stored language has
+        moved on since (someone else evolved it), nothing is written and StaleLanguageError is raised,
+        so two writers can never silently overwrite each other's history.
+        """
+        with self.sessions.begin() as s:
+            row = s.get(LanguageRow, state.language.id)
+            if row is None:
+                raise KeyError(state.language.id)
+            stored_version = json.loads(row.state_json)["version"]["id"]
+            if stored_version != expected_version_id:
+                raise StaleLanguageError(f"language {state.language.id} is at version {stored_version}, "
+                                         f"not {expected_version_id}")
+            row.state_json = state.model_dump_json()
+            row.entry_count = len(state.lexemes)
+            row.derived_count = sum(bool(lx.base_lexeme_ids) for lx in state.lexemes)
+
     def get_language(self, language_id: str) -> StoredLanguage | None:
         with self.sessions() as s:
             row = s.get(LanguageRow, language_id)
             if row is None:
                 return None
-            return StoredLanguage(state=LanguageState.model_validate_json(row.state_json),
-                                  world=World.model_validate_json(row.world_json), generation_id=row.generation_id)
+            return StoredLanguage(
+                state=LanguageState.model_validate(upgrade_language_state(json.loads(row.state_json))),
+                world=World.model_validate(upgrade_world(json.loads(row.world_json))),
+                generation_id=row.generation_id)

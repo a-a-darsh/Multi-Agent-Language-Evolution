@@ -58,7 +58,7 @@ def test_answer_to_unasked_question_rejected():
 
 def test_unusable_custom_words_rejected():
     seed = _seed_asking("custom_words")
-    response = client.post("/api/worlds", json={"seed": seed, "answers": {"custom_words": {"oasis": "strak"}}})
+    response = client.post("/api/worlds", json={"seed": seed, "answers": {"custom_words": {"oasis": "rtak"}}})
     assert response.status_code == 422
     error = response.json()["error"]
     assert error["code"] == "INVALID_CUSTOM_WORDS"

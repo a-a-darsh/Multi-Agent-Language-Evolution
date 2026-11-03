@@ -20,11 +20,15 @@ from pydantic import BaseModel, Field
 
 from app.models.grammar import AdpositionType, MorphologicalType, WordOrder
 from app.models.lexicon import PartOfSpeech
-from app.models.phonology import GRAPHEME_CATALOG, PhonemeClass, Position
+from app.models.phonology import PhonemeClass, Position
+from app.models.sounds import FOUNDING_SOUNDS
 
-VowelLetter = Literal[tuple(g for g, e in GRAPHEME_CATALOG.items() if e.phoneme_class == PhonemeClass.VOWEL)]
-ConsonantLetter = Literal[tuple(g for g, e in GRAPHEME_CATALOG.items() if e.phoneme_class == PhonemeClass.CONSONANT)]
-Letter = Literal[tuple(GRAPHEME_CATALOG)]
+# The design agent picks from the founding alphabet, by default spelling. Sounds added
+# for historical change (ñ, ā...) reach a founding language only through user words.
+VowelLetter = Literal[tuple(s.default_grapheme for s in FOUNDING_SOUNDS if s.phoneme_class == PhonemeClass.VOWEL)]
+ConsonantLetter = Literal[tuple(s.default_grapheme for s in FOUNDING_SOUNDS
+                                if s.phoneme_class == PhonemeClass.CONSONANT)]
+Letter = Literal[tuple(s.default_grapheme for s in FOUNDING_SOUNDS)]
 SyllablePattern = Literal["V", "CV", "VC", "CVC"]
 
 
@@ -45,7 +49,9 @@ class AffixDraft(BaseModel):
                     description="Descriptive snake_case identifier, e.g. 'agent' or 'place_of'.")
     # min_length: the model once returned meaning='' for every affix, leaving the dictionary blank.
     name: str = Field(min_length=2, description="Human-readable name, e.g. 'Agent noun'.")
-    meaning: str = Field(min_length=3, description="What it does, e.g. 'person associated with X' (sea -> sailor).")
+    meaning: str = Field(min_length=3, description=(
+        "Its specific meaning, e.g. 'person associated with X' (sea -> sailor). Not just a word class "
+        "('noun formation'): the meaning must say what the new word is."))
     position: Literal["prefix", "suffix"]
     form: str = Field(description="Spelling of the affix using only the language's letters, usually 1-3 letters.")
     input_parts_of_speech: list[PartOfSpeech] = Field(min_length=1, description="Word classes it attaches to.")

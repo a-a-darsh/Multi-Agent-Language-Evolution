@@ -7,16 +7,21 @@ edited outside it (persistence bugs, hand edits, future sound changes).
 
 from collections import Counter
 
-from app.generation.morphological_engine import MorphologyError, assemble
+from app.evolution.history import realize
 from app.generation.phoneme_generator import render_phonemes
 from app.models.language import LanguageState
-from app.models.validation import ValidationResult
+from app.models.validation import Severity, ValidationResult
 from app.validation.phonology_validator import validate_phoneme_sequence
 
 
 def validate_lexicon(state: LanguageState, max_depth: int | None = None) -> ValidationResult:
     result = ValidationResult()
     phonology = state.version.phonology
+    # Compositionality: every stored form must be exactly what its history produces - founding
+    # assembly, each version's sound changes (minus recorded exceptions), and words coined
+    # later built from their parts as they sounded then. See app.evolution.history.
+    expected_forms, history_problems = realize(state)
+    result.extend(history_problems)
     morphemes = {m.id: m for m in state.morphemes}
     rules = {r.id: r for r in state.derivational_rules}
     lexemes = {lx.id: lx for lx in state.lexemes}
@@ -43,16 +48,11 @@ def validate_lexicon(state: LanguageState, max_depth: int | None = None) -> Vali
             continue
         form = forms[0]
 
-        # Compositionality: the stored form must be exactly what the morphemes produce.
-        try:
-            rebuilt = assemble([morphemes[m] for m in lx.morpheme_ids], phonology, state.version.boundary_repair)
-        except MorphologyError as e:
-            result.extend(e.result)
-        else:
-            if rebuilt.phonemes != form.phonemes:
-                result.add("FORM_MISMATCH",
-                           f"{lx.concept_id!r} is stored as {''.join(form.phonemes)!r} but its morphemes "
-                           f"give {''.join(rebuilt.phonemes)!r}", object_id=lx.id)
+        expected = expected_forms.get(lx.id)
+        if expected is not None and expected.phonemes != form.phonemes:
+            result.add("FORM_MISMATCH",
+                       f"{lx.concept_id!r} is stored as {phonology.spell(form.phonemes)!r} but its "
+                       f"history gives {phonology.spell(expected.phonemes)!r}", object_id=lx.id)
 
         if form.orthography != render_phonemes(form.phonemes, phonology):
             result.add("ORTHOGRAPHY_MISMATCH", f"Spelling of {lx.concept_id!r} does not match its phonemes",
@@ -61,12 +61,17 @@ def validate_lexicon(state: LanguageState, max_depth: int | None = None) -> Vali
 
         if lx.derivation:
             _check_derivation(lx, lexemes, rules, result)
+        if lx.compound:
+            _check_compound(lx, lexemes, result)
 
     duplicates = Counter(tuple(f[0].phonemes) for f in forms_by_lexeme.values() if len(f) == 1)
     for form, count in duplicates.items():
         if count > 1:
-            result.add("DUPLICATE_FORM", f"{''.join(form)!r} is used by {count} different lexemes",
-                       details={"form": "".join(form)})
+            # A founding language never has homophones (the generator avoids them), but sound
+            # changes merge words for real, as English "knight"/"night" did.
+            result.add("DUPLICATE_FORM", f"{phonology.spell(form)!r} is used by {count} different lexemes",
+                       details={"form": phonology.spell(form)},
+                       severity=Severity.WARNING if state.previous_versions else Severity.ERROR)
 
     _check_graph(lexemes, result, max_depth)
     return result
@@ -93,19 +98,35 @@ def _check_derivation(lx, lexemes, rules, result: ValidationResult) -> None:
     # Parts of speech are not checked: an affix's "takes X, makes Y" is typical usage, not a rule.
 
 
+def _check_compound(lx, lexemes, result: ValidationResult) -> None:
+    parts = [lexemes.get(p) for p in lx.compound.part_lexeme_ids]
+    if any(p is None for p in parts):
+        result.add("UNKNOWN_BASE", f"{lx.concept_id!r} is a compound of a missing lexeme", object_id=lx.id)
+        return
+    if lx.morpheme_ids != [*parts[0].morpheme_ids, *parts[1].morpheme_ids]:
+        result.add("COMPOSITION_MISMATCH", f"{lx.concept_id!r} should be its two parts' morphemes in order",
+                   object_id=lx.id)
+
+
 def _check_graph(lexemes, result: ValidationResult, max_depth: int | None) -> None:
-    """The derivation graph must be acyclic (and optionally depth-limited)."""
+    """The building graph (derivation bases and compound parts) must be acyclic, optionally depth-limited."""
+    depths: dict[str, int] = {}
+
+    def depth(lexeme_id: str, path: tuple[str, ...]) -> int | None:
+        if lexeme_id in path:
+            return None  # cycle
+        if lexeme_id not in depths:
+            bases = [b for b in lexemes[lexeme_id].base_lexeme_ids if b in lexemes]
+            below = [depth(b, (*path, lexeme_id)) for b in bases]
+            if any(d is None for d in below):
+                return None
+            depths[lexeme_id] = 1 + max(below) if below else 0
+        return depths[lexeme_id]
+
     for start in lexemes.values():
-        seen, current, depth = {start.id}, start, 0
-        while current.derivation and current.derivation.base_lexeme_id in lexemes:
-            current = lexemes[current.derivation.base_lexeme_id]
-            depth += 1
-            if current.id in seen:
-                result.add("DERIVATION_CYCLE", f"{start.concept_id!r} is part of a derivation cycle",
-                           object_id=start.id)
-                break
-            seen.add(current.id)
-        else:
-            if max_depth is not None and depth > max_depth:
-                result.add("DERIVATION_TOO_DEEP", f"{start.concept_id!r} is {depth} steps from its root",
-                           object_id=start.id)
+        d = depth(start.id, ())
+        if d is None:
+            result.add("DERIVATION_CYCLE", f"{start.concept_id!r} is part of a derivation cycle", object_id=start.id)
+        elif max_depth is not None and d > max_depth:
+            result.add("DERIVATION_TOO_DEEP", f"{start.concept_id!r} is {d} steps from its root",
+                       object_id=start.id)

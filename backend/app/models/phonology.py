@@ -1,14 +1,12 @@
 from enum import StrEnum
-from typing import NamedTuple
 
 from pydantic import Field, model_validator
 
 from app.models.common import DomainModel, new_id
+from app.models.sounds import SOUNDS, PhonemeClass, Sound, nfc, sound, sound_for_grapheme
 
-
-class PhonemeClass(StrEnum):
-    CONSONANT = "C"
-    VOWEL = "V"
+__all__ = ["MAX_CLUSTER", "Phoneme", "PhonemeClass", "Phonology", "Position", "PositionRestriction",
+           "SIMPLE_PATTERNS", "SUPPORTED_PATTERNS", "pattern_order"]
 
 
 class Position(StrEnum):
@@ -18,55 +16,52 @@ class Position(StrEnum):
     WORD_FINAL = "word_final"
 
 
-class CatalogEntry(NamedTuple):
-    phoneme_class: PhonemeClass
-    ipa: str
+# Syllable shapes the engine understands: up to three consonants on each side of the vowel
+# (CCCVCCC, as in English "strengths"). Clusters must also obey sonority (see phonology_validator).
+MAX_CLUSTER = 3
+SUPPORTED_PATTERNS: frozenset[str] = frozenset(
+    "C" * onset + "V" + "C" * coda for onset in range(MAX_CLUSTER + 1) for coda in range(MAX_CLUSTER + 1))
+# The shapes the founding-language design agent chooses from. Clusters reach a founding
+# language only through the user's own words; sound changes can create them later.
+SIMPLE_PATTERNS: tuple[str, ...] = ("V", "CV", "VC", "CVC")
 
 
-# MVP orthography: every grapheme maps to exactly one phoneme and vice versa.
-# Graphemes are single letters or digraphs ("sh" is one sound, /ʃ/, not s + h).
-# Spellings are read longest-match first. A language picks a subset of this catalog.
-GRAPHEME_CATALOG: dict[str, CatalogEntry] = {
-    **{v: CatalogEntry(PhonemeClass.VOWEL, v) for v in "aeiou"},
-    **{
-        g: CatalogEntry(PhonemeClass.CONSONANT, ipa)
-        for g, ipa in {
-            "p": "p", "b": "b", "t": "t", "d": "d", "k": "k", "g": "ɡ", "q": "q",
-            "m": "m", "n": "n", "f": "f", "v": "v", "s": "s", "z": "z", "h": "h",
-            "x": "x", "l": "l", "r": "r", "w": "w", "y": "j", "j": "dʒ",
-            # "c" was /tʃ/ until digraphs were added; "ch" now spells /tʃ/, so "c" is /ts/
-            # (as in Pinyin and Slavic orthographies). Stored languages keep their recorded IPA.
-            "c": "ts",
-            "sh": "ʃ", "ch": "tʃ", "zh": "ʒ", "th": "θ", "dh": "ð", "ng": "ŋ",
-        }.items()
-    },
-}
-DIGRAPHS: frozenset[str] = frozenset(g for g in GRAPHEME_CATALOG if len(g) > 1)
-
-# Syllable shapes the MVP engine understands. No clusters, tone, or length yet.
-SUPPORTED_PATTERNS: frozenset[str] = frozenset({"V", "CV", "VC", "CVC"})
+def pattern_order(pattern: str) -> tuple[int, int]:
+    """Canonical order: by onset size, then coda size (V, VC, CV, CVC, CCV...)."""
+    return pattern.index("V"), len(pattern) - pattern.index("V") - 1
 
 
 class Phoneme(DomainModel):
-    # In the MVP a phoneme's id is its grapheme. The id is what lexeme forms
-    # store, so it must stay stable when sound changes are added later.
+    """One sound of a language, and how this language spells it.
+
+    `id` is the IPA symbol (see `app.models.sounds`). Word forms store ids, so
+    a sound change rewrites ids while spelling stays a separate choice: one
+    language can write /ʃ/ as "sh" and another as "š".
+    """
+
     id: str
     grapheme: str
+    # Always equal to `id`; kept as its own field so stored and API data stay explicit.
     ipa: str
     phoneme_class: PhonemeClass
     # Relative sampling weight for root generation ("common" vs "rare" sounds).
     frequency: float = Field(default=1.0, gt=0)
 
     @classmethod
+    def from_ipa(cls, ipa: str, grapheme: str | None = None, frequency: float = 1.0) -> "Phoneme":
+        s = sound(ipa)
+        return cls(id=s.ipa, grapheme=grapheme or s.default_grapheme, ipa=s.ipa,
+                   phoneme_class=s.phoneme_class, frequency=frequency)
+
+    @classmethod
     def from_grapheme(cls, grapheme: str, frequency: float = 1.0) -> "Phoneme":
-        entry = GRAPHEME_CATALOG[grapheme]
-        return cls(
-            id=grapheme,
-            grapheme=grapheme,
-            ipa=entry.ipa,
-            phoneme_class=entry.phoneme_class,
-            frequency=frequency,
-        )
+        """The sound a letter spells by default, spelled that way: "y" -> /j/ written "y"."""
+        s = sound_for_grapheme(grapheme)
+        return cls.from_ipa(s.ipa, grapheme=s.default_grapheme, frequency=frequency)
+
+    @property
+    def sound(self) -> Sound:
+        return sound(self.id)
 
 
 class PositionRestriction(DomainModel):
@@ -84,6 +79,8 @@ class Phonology(DomainModel):
     restrictions: list[PositionRestriction] = Field(default_factory=list)
     # Whether two vowels may be adjacent across a syllable boundary (e.g. "ri.a").
     allow_hiatus: bool = False
+    # Whether s-like sounds may break sonority at a cluster's edge: st-, sk-, -ks, -ts.
+    allow_s_clusters: bool = False
 
     @model_validator(mode="after")
     def _check_consistency(self) -> "Phonology":
@@ -96,11 +93,18 @@ class Phonology(DomainModel):
         if len(set(graphemes)) != len(graphemes):
             problems.append("duplicate graphemes")
         for p in self.phonemes:
-            entry = GRAPHEME_CATALOG.get(p.grapheme)
+            entry = SOUNDS.get(p.id)
             if entry is None:
-                problems.append(f"unsupported grapheme {p.grapheme!r}")
-            elif entry.phoneme_class != p.phoneme_class:
-                problems.append(f"grapheme {p.grapheme!r} must be class {entry.phoneme_class}")
+                problems.append(f"unknown sound /{p.id}/")
+                continue
+            if p.ipa != p.id:
+                problems.append(f"phoneme /{p.id}/ has ipa {p.ipa!r}; they must match")
+            if entry.phoneme_class != p.phoneme_class:
+                problems.append(f"/{p.id}/ must be class {entry.phoneme_class}")
+            if not p.grapheme or p.grapheme != nfc(p.grapheme).lower() or any(
+                    ch.isspace() or ch == "-" for ch in p.grapheme):
+                problems.append(f"grapheme {p.grapheme!r} for /{p.id}/ must be lowercase NFC text "
+                                "without spaces or hyphens")
 
         unsupported = set(self.syllable_patterns) - SUPPORTED_PATTERNS
         if unsupported:
@@ -128,7 +132,7 @@ class Phonology(DomainModel):
             Position.ONSET
         ):
             problems.append("onset patterns exist but every consonant is forbidden in onsets")
-        if any(p.endswith("VC") for p in self.syllable_patterns) and not self.consonants_allowed_in(
+        if any(p.endswith("C") for p in self.syllable_patterns) and not self.consonants_allowed_in(
             Position.CODA
         ):
             problems.append("coda patterns exist but every consonant is forbidden in codas")
@@ -150,6 +154,22 @@ class Phonology(DomainModel):
             if p.id == phoneme_id:
                 return p
         raise KeyError(phoneme_id)
+
+    def by_grapheme(self, grapheme: str) -> Phoneme:
+        for p in self.phonemes:
+            if p.grapheme == grapheme:
+                return p
+        raise KeyError(grapheme)
+
+    def spell(self, phoneme_ids) -> str:
+        """Written form for messages; unknown ids are shown as /ipa/ instead of failing."""
+        known = {p.id: p.grapheme for p in self.phonemes}
+        return "".join(known.get(p, f"/{p}/") for p in phoneme_ids)
+
+    @property
+    def has_multi_letter_graphemes(self) -> bool:
+        """Whether spelling can be ambiguous (s + h written "sh" vs /ʃ/ written "sh")."""
+        return any(len(p.grapheme) > 1 for p in self.phonemes)
 
     def has_phoneme(self, phoneme_id: str) -> bool:
         return any(p.id == phoneme_id for p in self.phonemes)

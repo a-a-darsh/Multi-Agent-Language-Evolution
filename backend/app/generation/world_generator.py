@@ -118,7 +118,7 @@ def generate_sound_profile(rng: random.Random) -> Phonology:
 def generate_name(rng: random.Random, phonology: Phonology | None = None) -> str:
     """A name that obeys `phonology`, or a throwaway sound system if none is given."""
     phonology = phonology or generate_sound_profile(rng)
-    return "".join(generate_root(phonology, rng.choice([2, 2, 3]), rng)).capitalize()
+    return phonology.spell(generate_root(phonology, rng.choice([2, 2, 3]), rng)).capitalize()
 
 
 def _unique_name(rng: random.Random, phonology: Phonology, taken: set[str]) -> str:

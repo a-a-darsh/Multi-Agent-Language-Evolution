@@ -8,7 +8,12 @@ how they were fixed.
 ## Running locally
 
 Ollama must be running (it starts with Windows; otherwise run `ollama serve`).
-Then two terminals:
+
+**One click (Windows):** double-click `start.bat` in the repo root. It installs
+dependencies if needed, opens the backend and frontend in their own windows, and
+opens http://localhost:3000 once the frontend is up. Close the two windows to stop.
+
+Or manually, in two terminals:
 
 ```
 cd backend

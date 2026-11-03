@@ -40,7 +40,8 @@ class SemanticConcept(DomainModel):
 class LexemeOrigin(StrEnum):
     USER_DEFINED = "user_defined"
     GENERATED_ROOT = "generated_root"
-    DERIVED = "derived"
+    DERIVED = "derived"     # base word + affix: fisher = fish + agent
+    COMPOUND = "compound"   # two words joined: seahorse = sea + horse
 
 
 class LexicalSense(DomainModel):
@@ -59,6 +60,13 @@ class Derivation(DomainModel):
     applied_morpheme_ids: list[str] = Field(min_length=1)
 
 
+class Compound(DomainModel):
+    """Records that a lexeme joins two existing lexemes, in written order (first + second)."""
+
+    output_lexeme_id: str
+    part_lexeme_ids: list[str] = Field(min_length=2, max_length=2)
+
+
 class Lexeme(DomainModel):
     """A word as an abstract identity that persists across historical changes.
 
@@ -75,6 +83,9 @@ class Lexeme(DomainModel):
     morpheme_ids: list[str] = Field(min_length=1)
     senses: list[LexicalSense] = Field(min_length=1)
     derivation: Derivation | None = None
+    compound: Compound | None = None
+    # The language version in which the word was coined; None = founding dictionary.
+    coined_in_version_id: str | None = None
 
     @model_validator(mode="after")
     def _derived_iff_has_derivation(self) -> "Lexeme":
@@ -83,7 +94,20 @@ class Lexeme(DomainModel):
             raise ValueError("derived lexemes must have a derivation, others must not")
         if self.derivation is not None and self.derivation.output_lexeme_id != self.id:
             raise ValueError("derivation.output_lexeme_id must equal the lexeme id")
+        if (self.origin == LexemeOrigin.COMPOUND) != (self.compound is not None):
+            raise ValueError("compound lexemes must have a compound record, others must not")
+        if self.compound is not None and self.compound.output_lexeme_id != self.id:
+            raise ValueError("compound.output_lexeme_id must equal the lexeme id")
         return self
+
+    @property
+    def base_lexeme_ids(self) -> list[str]:
+        """The words this one is built from: the base of a derivation, or both parts of a compound."""
+        if self.derivation:
+            return [self.derivation.base_lexeme_id]
+        if self.compound:
+            return list(self.compound.part_lexeme_ids)
+        return []
 
 
 class FormSegment(DomainModel):

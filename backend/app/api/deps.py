@@ -4,7 +4,9 @@ from functools import cache
 
 from app.agents.pipeline import AgentLLMs, agent_llms_from_settings
 from app.api.errors import ApiError
+from app.llm.chat_model import build_chat_model
 from app.llm.settings import SettingsStore
+from app.llm.tool_calling import LangChainToolLLM, ToolCallingLLM
 from app.persistence.database import make_session_factory
 from app.persistence.repository import Repository
 from app.services.generation_jobs import GenerationService
@@ -22,6 +24,14 @@ def llms_from_saved_settings() -> tuple[AgentLLMs, dict]:
     if settings is None:
         raise ApiError(409, "LLM_NOT_CONFIGURED", "Choose an AI model in the setup screen first")
     return agent_llms_from_settings(settings), {"provider": settings.provider.value, "model": settings.model}
+
+
+def get_tool_llm() -> ToolCallingLLM:
+    """The tool-calling model for the evolution agent, from the saved settings."""
+    settings = SettingsStore.default().load()
+    if settings is None:
+        raise ApiError(409, "LLM_NOT_CONFIGURED", "Choose an AI model in the setup screen first")
+    return LangChainToolLLM(build_chat_model(settings, temperature=0.4, max_tokens=2048), settings.model)
 
 
 @cache

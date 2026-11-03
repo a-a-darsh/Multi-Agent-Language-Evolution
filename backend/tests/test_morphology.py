@@ -85,12 +85,12 @@ def test_prefix_goes_first():
     assert e.form_of(e.derive(good.id, "negative", "bad", "bad").id).orthography == "mosel"
 
 
-def test_part_of_speech_must_match():
+def test_any_affix_attaches_and_word_takes_given_part_of_speech():
     e = engine()
-    sea = e.add_root("sea", "sea", POS.NOUN, list("nal"))
-    with pytest.raises(MorphologyError) as exc:
-        e.derive(sea.id, "negative", "unsea", "unsea")
-    assert code_of(exc) == "POS_MISMATCH"
+    water = e.add_root("water", "water", POS.NOUN, list("mari"))
+    wave = e.derive(water.id, "negative", "wave", "wave", part_of_speech=POS.NOUN)  # negative usually wants adjectives
+    assert wave.part_of_speech == POS.NOUN and e.form_of(wave.id).orthography == "momari"
+    assert validate_lexicon(to_state(e)).ok
 
 
 def test_unknown_rule_lists_alternatives():

@@ -30,6 +30,9 @@ class Morpheme(DomainModel):
     type: MorphemeType
     gloss: str
     origin: MorphemeOrigin = MorphemeOrigin.GENERATED
+    # The language version in which this morpheme entered the language; None = founding.
+    # Its phonemes are as they were then; later sound changes are applied on top.
+    introduced_in_version_id: str | None = None
 
 
 class BoundaryRepair(DomainModel):

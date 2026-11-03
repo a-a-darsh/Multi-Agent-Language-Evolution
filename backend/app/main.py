@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.api import languages, questionnaire, settings, worlds
+from app.api import evolution, languages, questionnaire, settings, worlds
 from app.api.deps import get_generation_service
 from app.api.errors import ApiError, api_error_handler
 
@@ -19,5 +19,5 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="Language Evolution Simulator", lifespan=lifespan)
 app.add_exception_handler(ApiError, api_error_handler)
-for module in (questionnaire, worlds, settings, languages):
+for module in (questionnaire, worlds, settings, languages, evolution):
     app.include_router(module.router, prefix="/api")

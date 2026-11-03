@@ -18,6 +18,7 @@ python -m uv run python -m app.cli design --example coastal_trading_sov   # uses
 python -m uv run python -m app.cli design --example evidentiality --model <ollama model>
 python -m uv run python -m app.cli generate --example coastal_trading_sov  # design + full dictionary
 python -m uv run python -m app.cli graph                                   # Mermaid diagram of the workflow
+python -m uv run python -m app.cli evolve --language Varish palatalization i_umlaut  # preview sound changes (saves nothing)
 ```
 
 Runs are saved to `backend/.local/runs/` with every prompt, reply, and validation issue.
@@ -35,6 +36,8 @@ Runs are saved to `backend/.local/runs/` with every prompt, reply, and validatio
     sometimes names affixes after cultural themes rather than functions (agent, place...).
 - [x] Phase 7 - persistence (SQLite) and API, background generation jobs with live progress
 - [x] Phase 8 - frontend: questionnaire -> progress -> overview, dictionary explorer, world, generation log
+- [x] MVP 2, step 1 - sound-change engine (IPA sounds with features, clusters, insertion, exceptions,
+  coined words, saved versions) and the Linguistic Evolution Agent (tool use; see below)
 - Moved to MVP 2: RAG. Decision: retrieval is only used for language *evolution* (historical precedent,
   contact outcomes, simulation memory); the founding language is generated without it.
 
@@ -44,6 +47,14 @@ Runs are saved to `backend/.local/runs/` with every prompt, reply, and validatio
 |---|---|
 | `app/models/` | Pydantic domain models - the source of truth |
 | `app/data/` | Question bank, semantic inventory, example requests |
+| `app/models/sounds.py` | Sound catalog: IPA ids, features, default spellings |
+| `app/models/sound_change.py` | Sound-change rules as data: target, output, environment |
+| `app/evolution/sound_change_engine.py` | Applies a rule to every word; preview with impact report; next version |
+| `app/evolution/history.py` | Replays every word's history; the one source of truth for evolved forms |
+| `app/evolution/lexicon.py` | Coins new roots and derivations in an evolved language |
+| `app/api/evolution.py` | Sound-change preview/commit, new words, version history |
+| `app/evolution/templates.py` | Named, attested changes (palatalization, umlaut, lenition, final vowel loss...) |
+| `app/persistence/migrations.py` | Upgrades stored JSON from older model versions on load |
 | `app/questionnaire.py` | Random question selection; answers -> `GenerationRequest` |
 | `app/validation/phonology_validator.py` | Syllable parser; decides what forms are legal |
 | `app/generation/phoneme_generator.py` | Seeded RNG streams, syllable generation, spelling <-> phonemes |
@@ -61,6 +72,10 @@ Runs are saved to `backend/.local/runs/` with every prompt, reply, and validatio
 | `app/agents/dictionary_schema.py` | Run-time (dynamic) schemas for plan, repair, and critic |
 | `app/agents/morphological_planner.py` | The planner workflow (plan -> build -> critique -> repair) |
 | `app/agents/pipeline.py` | Parent graph: design agent, then planner |
+| `app/agents/evolution_agent.py` | The Linguistic Evolution Agent: a tool-using loop |
+| `app/agents/evolution_tools.py` | Its tools: overview, find words, preview, submit |
+| `app/llm/tool_calling.py` | Tool-calling LLM wrapper with recording, scripted replies, structured fallback |
+| `app/evolution/specs.py` | How the API and the agent describe a step (template or rule, exceptions) |
 | `app/agents/runner.py` | Runs a graph with `stream()` to report each finished node (progress) |
 | `app/persistence/` | SQLite tables and the repository (the only code that knows storage) |
 | `app/services/generation_jobs.py` | Background generation jobs, one at a time |
@@ -78,15 +93,104 @@ Runs are saved to `backend/.local/runs/` with every prompt, reply, and validatio
 - **Validator is the single authority on legality.** The generator builds from
   legal syllables, but whole roots are always re-checked by the validator.
   A property test over random phonologies enforces that they agree.
+- **Sound changes are regular rules, applied by the engine.** A rule
+  (`A -> B / left _ right`) names the sounds by IPA or features and never
+  lists words; the engine applies it to every word that meets the condition,
+  all positions at once (a rule never feeds itself). Rules substitute or
+  delete one sound at a time, so segmentation survives. A feature output
+  ("make it voiced") changes only that feature; a sound with no such partner
+  in the catalog (/q/ has no voiced counterpart) is left alone and reported.
+  `apply_sound_change` returns a preview (changed words, new and lost sounds,
+  new homophones, words that would become illegal) and, if every word stays
+  legal, the next `LanguageVersion`; nothing is saved by the engine.
+  - **Morphemes keep their founding forms; history is replayable.**
+    `evolution/history.realize` rebuilds every word from scratch: founding
+    assembly, then each version's changes in order (minus recorded
+    exceptions), with words coined later built from their parts as they
+    sounded then. The engine, the validator, and coinage all use it, so they
+    can't drift apart (a property test interleaves all three). Earlier
+    versions and their forms are kept in `LanguageState`.
+  - **Steps.** Several rules can form one step (one new version), checked for
+    legality only at the end: final vowel loss may create "ojenr" if a later
+    rule in the same step inserts a vowel ("ojener").
+  - **Insertion** (`insert`): epenthesis and prothesis. An inserted sound
+    joins the segment of the sound before it (or after it, word-initially).
+    Matcher features may list alternatives (`manner: [nasal, trill]`).
+  - **Exceptions** (`SoundChangeException`): a word may skip a rule only with
+    a stated reason (lexical diffusion, frequency, analogy), at most 5% of
+    the dictionary per step, and only where skipping changes something.
+  - **Linking sounds evolve** like other sounds (judged on their own); if
+    they disappear, the version has no boundary repair.
+  - **Sound rules describe the language, so they follow it.** After a change,
+    the inventory drops sounds no word uses and adds new ones (default
+    spelling, or one chosen per call); syllable shapes, hiatus, and position
+    restrictions are updated to fit the new words, with each change reported.
+  - **Homophones from mergers are allowed** (a warning, not an error) in
+    evolved versions; founding languages still forbid them.
+  - A new syllable shape is added only for a word the existing shapes can't
+    parse, so a CVC language doesn't gain CCV for "ap.lo".
+- **Coining words in an evolved language** (`evolution/lexicon.py`). A new
+  root is written in today's spelling (or generated from today's sound
+  system); a new derivation joins the base word's current form with the
+  affix's current shape (the founding affix with every change since applied
+  to it alone). Coined words record their version, and every later change
+  applies to them. Coinages may not create homophones.
+- **Saving.** `Repository.save_language_state` replaces the stored state but
+  only if it is still at the version the caller started from (409 / stale
+  error otherwise), so two writers can't overwrite each other's history.
+  API: `GET /api/sound-change-templates`, `POST
+  /api/languages/{id}/sound-changes/preview` and `.../sound-changes`
+  (commit), `POST .../words`, `GET .../history`. CLI: `evolve ... --save`.
+  Not yet: metathesis, and a frontend for evolution.
+- **Linguistic Evolution Agent: the first agent that chooses its own actions.**
+  The design and dictionary agents are workflows (code routes every step).
+  This one is given a language, a span of years and optional historical
+  context, and decides what to do with four tools: `get_language_overview`,
+  `find_words`, `preview_sound_changes` (the engine's impact report: words
+  changed, homophones, illegal words, reversals of earlier changes) and
+  `submit_evolution`. The graph only runs the loop (`act` -> `use_tools`)
+  and enforces a budget (16 model calls). The LLM chooses and tunes rules;
+  the engine applies them and has the final say, so a submission is refused
+  if any word would become illegal or a rule changes nothing, and the agent
+  revises. Nothing is saved unless the caller asks (`--save`, `"save": true`).
+  - Local models sometimes describe a tool call instead of making it, and
+    Ollama ignores `tool_choice`. Fallbacks: a step written as JSON in the
+    text is run as a preview (never a submission), and otherwise the next
+    action is requested through structured output, which is
+    schema-constrained. See `docs/what-went-wrong.md` #35-38.
+  - Tool errors are written as instructions ("a rule does one thing ... use
+    two rules in the same step"), because they are the agent's feedback.
+  - CLI: `evolve-agent --language X --years 200 --context "..." [--save]`
+    (records the run in `.local/runs/`). API: `POST
+    /api/languages/{id}/evolve-agent` (synchronous, ~1 minute locally).
 - **Syllabification:** all parses are enumerated; a form is legal if any parse
   satisfies the positional restrictions. The preferred parse uses the
   maximal-onset principle (`aka` -> `a.ka`).
-- **Supported syllables:** V, CV, VC, CVC. No clusters yet. Vowel-initial
-  syllables are allowed; adjacent vowels (hiatus) are opt-in per language
-  and inferred from user words.
-- **Phoneme id = grapheme** in MVP 1 (strict one-letter-one-sound orthography).
-  Forms store phoneme ids, so sound changes can later rewrite phonemes
-  without touching spelling logic.
+- **Syllables and clusters:** up to three consonants on each side of the
+  vowel (CCCVCCC). Clusters follow the sonority sequencing principle:
+  consonants get more vowel-like toward the vowel and less after it
+  (stop < affricate < fricative < nasal < liquid < glide), so pl-, -lp, kn-
+  are legal and lp-, -pl, tt- are not. `allow_s_clusters` lets s-like sounds
+  break that order next to a stop at the edge (st-, str-, -ks), and is on
+  only when a user word or a sound change needs it. The design agent still
+  chooses from V, CV, VC, CVC; cluster shapes reach a founding language
+  through user words (added by code, like required sounds) or later through
+  sound changes. Syllabification prefers the largest legal onset (a.plo, not
+  ap.lo). Single-consonant slots draw random numbers exactly as before, so
+  seeds reproduce the same roots; cluster slots sample only legal clusters.
+  Vowel-initial syllables are allowed; adjacent vowels (hiatus) are opt-in
+  per language and inferred from user words.
+- **Phoneme id = IPA symbol; spelling is per language.** `models/sounds.py`
+  is the universal catalog (~60 sounds) with phonological features (place,
+  manner, voicing; height, backness, rounding, length, nasality) for
+  sound-change rules to match on. Each language's `Phoneme.grapheme` is its
+  own spelling, so /ʃ/ can be "sh" in one language and "š" in another, and a
+  sound change rewrites ids without touching spelling. The catalog's default
+  spellings keep the original alphabet unchanged; every sound added later
+  (ñ, ť, ā, ã, ü...) uses one non-ASCII letter, so no old ASCII word re-reads
+  as a new sound. The design agent still picks from the original alphabet;
+  new sounds reach a founding language only through user words. Languages
+  saved with letter ids are upgraded on load (`persistence/migrations.py`).
 - **Reproducibility:** `derive_rng(seed, label)` gives each random step its
   own stream, so adding a new random step does not change existing output for
   the same seed. LLM outputs are not reproducible from the seed; they will be
@@ -100,6 +204,37 @@ Runs are saved to `backend/.local/runs/` with every prompt, reply, and validatio
   events influence how the language *changes* (e.g. loanwords), never its
   founding state. The focal civilization is completed from its own RNG
   stream, so it is identical regardless of neighbor generation (tested).
+- **Parts of speech guide, they don't block.** An affix's "takes X, makes Y"
+  is shown to the planner as typical usage; any affix may attach to any word,
+  and the result takes its concept's part of speech. Meaning is judged by the
+  critic instead (enforcing word classes blocked wave = water + movement).
+- **Compounds, affixes, and roots.** A word can be built two ways: a
+  compound of two words (`LexemeOrigin.COMPOUND`, seahorse = sea + horse) or
+  a word + an affix. The planner uses an affix only when base + affix says
+  everything important (fisher = fish + agent), a compound when a concept
+  really combines two things, and an own root for basic vocabulary. Code
+  refuses an affix on a word that already has it (no ma-ma-bimaf) and
+  grammatical words (in, not) as compound parts; the design agent is told
+  off for affix meanings that only name a word class ("noun formation").
+  The critic names what the parts leave out, and a named gap rejects the
+  word. Further rules (code, not prompts, after the critic approved
+  black = night + one): basic-vocabulary (core) concepts are never compounds,
+  though a fitting affix may derive them (bad = not + good); numbers,
+  quantities and function words are never compound parts; an affix's result
+  must be its output word class (buy can't be trade + person); a word may be a
+  part of at most 8 compounds. A compound is in both parts' word families. At a compound seam, two
+  meeting vowels merge (the first word's final vowel drops: mifi + esmisrac
+  -> mifesmisrac); for affixes, elision is the last resort after linking
+  sounds. Compounds evolve and can be coined in evolved languages like any
+  other word (`evolution/lexicon.compound_word`, `POST .../words` with `parts`).
+- **Unambiguous design fixes are made by code.** Besides what user words
+  need, code adds letters that affixes are written with, drops restrictions
+  on sounds the inventory lacks, and drops restrictions a user word breaks.
+- **Derived-word target.** The create page sets 0-50% (default 20%). The
+  planner is told the target; an `expand` step asks for more derivations if
+  the build falls short (up to 2 rounds, only among words that still have
+  their own root); the critic still rejects forced ones and the result
+  reports a shortfall. 0% skips planning entirely.
 - **Words can share meanings (polysemy).** A lexeme has a list of senses.
   Two routes: the user gives the same spelling to two meanings (one word,
   both senses), or the planner lists `extended_senses` (wealth = the word for

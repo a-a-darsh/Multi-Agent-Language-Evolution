@@ -12,6 +12,7 @@ from app.generation.phoneme_generator import (
 )
 from app.generation.root_generator import DuplicateFormError, RootRegistry, generate_root
 from app.models.phonology import SUPPORTED_PATTERNS, Phoneme, Phonology, Position, PositionRestriction
+from app.models.sounds import sound_for_grapheme
 from app.validation.phonology_validator import validate_phoneme_sequence
 from tests.factories import sample_phonology
 
@@ -29,7 +30,8 @@ def phonologies(draw) -> Phonology:
     return Phonology(
         phonemes=[Phoneme.from_grapheme(g) for g in consonants + vowels],
         syllable_patterns=patterns,
-        restrictions=[PositionRestriction(phoneme_id=restricted, forbidden_positions=positions)],
+        restrictions=[PositionRestriction(phoneme_id=sound_for_grapheme(restricted).ipa,
+                                          forbidden_positions=positions)],
         allow_hiatus=draw(st.booleans()),
     )
 
@@ -67,13 +69,13 @@ def test_spelling_round_trip():
 
 
 def test_digraphs_are_single_sounds():
-    assert parse_spelling("shira") == ["sh", "i", "r", "a"]
-    assert parse_spelling("ngacha") == ["ng", "a", "ch", "a"]
+    assert parse_spelling("shira") == ["ʃ", "i", "r", "a"]
+    assert parse_spelling("ngacha") == ["ŋ", "a", "tʃ", "a"]
     # A language without /ʃ/ reads the same letters as two sounds.
     no_sh = sample_phonology(phonemes=[Phoneme.from_grapheme(g) for g in [*"shira"]], restrictions=[])
     assert parse_spelling("shira", no_sh) == ["s", "h", "i", "r", "a"]
     with_sh = sample_phonology(phonemes=[Phoneme.from_grapheme(g) for g in ["sh", "r", "i", "a"]], restrictions=[])
-    assert render_phonemes(["sh", "i", "r", "a"], with_sh) == "shira"
+    assert render_phonemes(["ʃ", "i", "r", "a"], with_sh) == "shira"
 
 
 def test_registry_generates_unique_reproducible_roots():

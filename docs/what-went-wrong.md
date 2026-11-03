@@ -386,6 +386,185 @@ Each entry: **Issue**, **How it was diagnosed**, **Fix**, and a one-line **Takea
 - **Fix:** Renamed the new key to `user_notes`, with a comment explaining why the name matters.
 - **Takeaway:** In LangGraph, the state schema is behavior: a key's reducer defines how updates merge.
 
+### 31. Two features that each passed their tests crashed together
+
+- **Issue:** After adding shared words (polysemy), a live generation failed with `KeyError: 'sky'`.
+- **How it was diagnosed:** The traceback pointed at the derivation step: building a word on top of
+  "sky" when "sky" had no word yet. The planner had made "sky" share the word for "god", and then
+  derived another word *from* "sky". Shared words are attached after derivations are built, so the
+  base didn't exist yet. Derivations and shared words each had thorough tests, but never together.
+- **Fix:** Planning check `BASE_IS_SHARED_WORD`: a derivation built on a shared word is sent back
+  for repair, pointing to the word it actually shares. Plus a property test that mixes random
+  derivations with random shared words and checks the whole dictionary validates. That's the test
+  that would have caught this before a live run.
+- **Takeaway:** Test features in combination, not just one at a time. Random combinations
+  (property tests) find interactions that hand-written tests miss.
+
+### 32. The model copied the example from the prompt
+
+- **Issue:** The crash in #31 involved "sky = the word for god", which was literally the example in
+  the planner's prompt.
+- **How it was diagnosed:** Compared the model's shared words with the prompt text: an exact match.
+- **Fix:** Replaced it with an example the model can't copy (zinc isn't in the built-in concept list)
+  and added "examples illustrate the idea; they are not suggestions".
+- **Takeaway:** Smaller models treat examples as templates. Pick examples that can't be reused verbatim.
+
+### 33. A safety rule was too strict and blocked good output (user feedback)
+
+- **Issue:** The user noticed a reasonable word, "wave" from "water" plus a movement affix, was
+  rejected because the movement affix "doesn't make nouns".
+- **How it was diagnosed:** The part-of-speech rules (each affix "takes X, makes Y") were enforced as
+  hard constraints in four places: the plan check, the morphology engine, the dictionary validator,
+  and a design check that existed only because of them. They had been added to stop nonsense, but
+  the critic was already catching nonsense by judging meaning directly.
+- **Fix:** Parts of speech became guidance: the planner sees "usually on a noun, usually makes a
+  noun", any affix can attach to any word, and the new word takes its concept's part of speech.
+  Meaning stays guarded by the critic. The dependent design check was removed, and the tests that
+  asserted blocking were rewritten to assert the new freedom.
+- **Takeaway:** Guardrails have a cost. Once a better safeguard exists (a critic judging meaning), a
+  crude proxy rule (word classes) can do more harm than good.
+
+### 34. Pushing for more output without making the model fill slots
+
+- **Issue (design challenge):** The user asked for a setting where up to 50% of the dictionary is
+  derived. The local model naturally produced about 10%, and earlier experience (#10) showed that
+  forcing a model to fill a quota produces nonsense.
+- **How it was handled:** The target is pursued in rounds rather than forced. The planner is told
+  the target; if the result falls short, an `expand` step asks for more, only among words that still
+  have their own root, explicitly saying that skipping forced ones is fine. The critic still rejects
+  implausible derivations, and the result reports the real share if it falls short. The critic now
+  reviews only new or changed derivations, so repeated rounds stay fast and within its output limit.
+- **Takeaway:** When a user wants more quantity, keep the quality gate in place and report honestly
+  when the target isn't reached.
+
+## Part 4: The evolution agent (tool use)
+
+The first agent that chooses its own actions. All four issues below came from live runs with the
+local model (Mistral Small 3.2 via Ollama).
+
+### 35. The model announced tool calls instead of making them
+
+- **Issue:** In a run that needed a custom rule, the model wrote "I'll create a custom rule ... and
+  preview the sound change", sometimes with a correct rule as JSON in its reply, but never made the
+  call. The nudge ("please call a tool") was answered with empty replies, and the run failed.
+- **How it was diagnosed:** Read the recorded replies: the rule in the text was nearly valid, so the
+  model understood the task; the problem was the tool-call mechanism. Ollama ignores `tool_choice`,
+  so a call can't be forced at the API level.
+- **Fix:** Two fallbacks, used only when a reply has no tool call. (1) A step written as JSON in the
+  text is found and run - as a preview only, never a submission - and the model is told so. (2)
+  Otherwise the agent asks for the intended action through *structured output*, which Ollama decodes
+  against a JSON schema, so it can't be skipped. Thinking aloud between calls is allowed; only
+  several text replies in a row end the run (an earlier limit counted them over the whole run).
+- **Takeaway:** With local models, tool calling and structured output are not equally reliable.
+  Use the constrained mechanism as a backstop for the flexible one.
+
+### 36. A strict fallback schema threw away fixable attempts
+
+- **Issue:** The structured fallback parsed the model's next action, including its rules, with the
+  full rule schema. When a rule broke a validator (both `output_features` and `delete`), the whole
+  action was discarded as "did not match the schema", and the model never learned why.
+- **Fix:** The fallback types the changes loosely (plain objects). Malformed rules now reach the
+  tool, whose validation message goes back to the model as a tool result, so it can repair them.
+- **Takeaway:** Validate where the error message can reach the model. A parse failure inside the
+  harness is silent; a tool error is feedback.
+
+### 37. An error message said what was wrong but not how to do it right
+
+- **Issue:** The model tried to nasalize a vowel *and* delete the following n in one rule. The error
+  ("give exactly one of output_features, output_mapping, delete, or insert") was correct, but the
+  model's next attempt simply dropped the deletion, and it then misread its own preview, claiming
+  the n was gone when the examples showed it wasn't (tubun -> tubũn).
+- **Fix:** The message now says how to express the intent: "a rule does one thing ... to do two
+  things, use two rules in the same step; they apply in order". The next run wrote both rules
+  (tubun -> tubũ) on the first try.
+- **Takeaway:** Like repair prompts (#2), tool errors work best as instructions. Say what to do
+  instead, not only what was wrong.
+
+### 38. A rule that changed nothing would have been recorded as history
+
+- **Issue:** The agent submitted final vowel loss + cluster epenthesis + h-loss where the epenthesis
+  rule changed 0 words (the vowel-loss variant it chose never created a bad cluster). The step was
+  legal, so it was accepted, and the language's history would have recorded a change that never
+  happened.
+- **Fix:** Previews warn about rules that change no word, and submission refuses them.
+- **Takeaway:** "Legal" isn't the only bar for what gets committed to a permanent record.
+
+## Part 5: Compounds and affix discipline (user feedback)
+
+### 39. Generic affixes made words that didn't mean anything (user feedback)
+
+- **Issue:** The user found oar = swim + "noun formation" (mauzonip), and stacks of one affix
+  (bimaf, mabimaf, mamabimaf). An affix that only names a word class says nothing about what the new
+  word is, and the critic, asked only whether a connection was imaginable, let it through.
+- **Fix:** Four layers. (1) Code refuses to add an affix to a word that already has it. (2) The
+  design agent gets a soft finding (`AFFIX_TOO_GENERIC`) for affix meanings that only name a word
+  class. (3) The planner can build **compounds** (sea + horse), and is told to use an affix only when
+  base + affix says everything important. (4) The critic names what the parts leave out ("a tool;
+  rowing, not swimming") and a named gap rejects the word.
+- **Takeaway:** "Could this connection be imagined?" is too weak a test. Ask what's missing.
+
+### 40. A field meant to be empty was filled with "nothing missing"
+
+- **Issue:** The first live run rejected 46 of 47 built words, including sailor = ship + person.
+  The critic's new `missing` field was supposed to be '' when nothing was missing; the model wrote
+  "nothing missing", and code treated any text as a gap.
+- **Fix:** The field asks for 'none', and code recognizes the usual ways of saying nothing
+  ("none", "nothing", "n/a", "nothing important missing").
+- **Takeaway:** Models rarely leave a string empty. Never treat "non-empty" as a signal.
+
+### 41. Telling the planner compounds were "the main way" over-corrected
+
+- **Issue:** The planner compounded everything: bone = person + small, head = person + eye,
+  fisher = fish + person (when the language had an agent suffix), market = trade + in.
+- **Fix:** The prompt balances the three options: a compound when a concept really combines two
+  things, an affix when it says everything, and basic vocabulary (body parts, nature, basic
+  actions, colors, kinship) keeps its own root. Code refuses grammatical words (in, not) as
+  compound parts. The next run had 18 compounds and 8 derivations, with word families such as
+  house -> market (trade + house), fortress (stone + house), council (law + house).
+- **Takeaway:** "Prefer X" in a prompt is read as "always X". Say when each option is right.
+
+### 42. Two vowels at a seam failed the word instead of merging (user feedback)
+
+- **Issue:** fish + tool gave "fempoik", illegal without hiatus, so the compound failed and became
+  a root. The user pointed out that real languages drop one of the vowels, and that for compounds
+  this should be the normal join, not a last resort.
+- **Fix:** At a compound seam, two meeting vowels always merge (the first word's final vowel drops:
+  ship + person -> mifesmisrac). For affixes it stays the last resort, after the design's linking
+  sounds, so affixes stay recognizable and every existing word is unchanged. The seam is recorded,
+  so history replay rebuilds compounds identically.
+- **Takeaway:** When the engine refuses a combination, ask how a real language would have made it.
+
+### 43. The design failed on mistakes that had only one correct fix
+
+- **Issue:** Two runs in a row failed the design: affixes written with letters the inventory lacked
+  ("-pan" without n), restrictions on sounds that weren't in the inventory, and a restriction that
+  made a user word illegal ("m cannot begin a word" vs "mari"). The model fixed one per repair
+  and ran out of attempts.
+- **Fix:** Code makes these fixes, as it already did for sounds the user's words need (#7): it adds
+  letters affixes use, drops restrictions on absent sounds, and drops restrictions a user word breaks.
+  Each is reported as a note.
+- **Takeaway:** Every repair round spent on an unambiguous fix is one less for real judgment.
+
+### 44. A filler word and misused suffixes, all approved by the critic (user feedback)
+
+- **Issue:** In "Amina" the user found buy = trade + person-suffix (imumima) and "one" (epakte) in 12
+  compounds: black = night + one, good = heart + one, here = house + one; "many" in 6 more. The
+  critic approved every one ("plausible, nothing missing"). A repair reply also repeated one fix
+  121 times until it no longer parsed. The user noted some compounds were genuinely good
+  (forge = fire + tool, goat = animal + mountain), so the fix had to be targeted.
+- **How it was diagnosed:** Every bad word was a *core* (basic-vocabulary) concept built as a
+  compound, a number or quantity used as a part, or an affix whose output didn't match the concept.
+  The critic couldn't be relied on for any of them.
+- **Fix:** Code rules. Basic vocabulary is never a compound (it's not offered to the planner as
+  one), though a fitting affix may still derive it (bad = not + good). Numbers, quantities and
+  function words are never compound parts. An affix's result must be its output word class (the
+  person affix makes a person, not "buy"). A part may appear in at most 8 compounds (a first cap of
+  5 also blocked good words like market = trade + house). The repair list is bounded. Replaying
+  Amina's plan: every reported word is stopped and every good one kept. The next live run had no
+  violations (ship = water + carry, wave = water + wind, fisher = fish + profession).
+- **Takeaway:** When a critic keeps approving one pattern, find the property that defines the pattern
+  and enforce it in code. Then check the rule against the good examples too.
+
 ---
 
 ## Patterns worth talking about
@@ -402,3 +581,6 @@ Each entry: **Issue**, **How it was diagnosed**, **Fix**, and a one-line **Takea
    never fails a run (#8), and an unavailable critic is noted rather than fatal.
 5. **Valid ≠ good.** Deterministic validation was necessary but not sufficient (#3, #9); quality
    needed both targeted checks and a well-designed critic.
+6. **Agents need feedback they can act on.** With tool use, every tool result is a prompt. The
+   evolution agent got better mostly by improving error messages and fallbacks (#35-37), not by
+   changing its system prompt.

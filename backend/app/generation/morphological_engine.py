@@ -15,6 +15,7 @@ from app.generation.phoneme_generator import render_phonemes
 from app.generation.root_generator import DuplicateFormError, RootRegistry
 from app.models.common import DomainModel, new_id
 from app.models.lexicon import (
+    Compound,
     Derivation,
     FormSegment,
     LexemeForm,
@@ -25,6 +26,7 @@ from app.models.lexicon import (
 )
 from app.models.morphology import BoundaryRepair, DerivationalRule, Morpheme, MorphemeOrigin, MorphemeType
 from app.models.phonology import Phonology, PhonemeClass
+from app.models.sounds import SOUNDS
 from app.models.validation import ValidationResult
 from app.validation.phonology_validator import validate_phoneme_sequence
 
@@ -53,16 +55,33 @@ class AssemblyResult(DomainModel):
 
 
 def _build(pieces: Sequence[Morpheme], phonology: Phonology, repair: BoundaryRepair | None,
-           insert_at: set[int]) -> AssemblyResult:
-    """Concatenate pieces, inserting a linking segment before piece i for each i in insert_at."""
+           insert_at: set[int], elide_at: frozenset[int] = frozenset()) -> AssemblyResult:
+    """Concatenate pieces, inserting a linking segment before piece i for each i in insert_at, and
+    dropping one of the two vowels that meet before piece i for each i in elide_at (see _elide)."""
+    shapes = [list(p.phonemes) for p in pieces]
+    for i in sorted(elide_at):
+        left, right = shapes[i - 1], shapes[i]
+        if len(left) > 1:
+            left.pop()       # the first word's final vowel goes: fempo + ik -> fempik
+        elif len(right) > 1:
+            right.pop(0)     # a one-vowel piece can't vanish, so the other vowel goes instead
     segments: list[FormSegment] = []
     for i, piece in enumerate(pieces):
         if i in insert_at:
             left_is_vowel = phonology.phoneme(pieces[i - 1].phonemes[-1]).phoneme_class == PhonemeClass.VOWEL
             link = repair.linking_consonant if left_is_vowel else repair.linking_vowel
             segments.append(FormSegment(phonemes=[link]))
-        segments.append(FormSegment(phonemes=list(piece.phonemes), morpheme_id=piece.id))
+        segments.append(FormSegment(phonemes=shapes[i], morpheme_id=piece.id))
     return AssemblyResult(phonemes=[p for s in segments for p in s.phonemes], segments=segments)
+
+
+def _vowel_meetings(pieces: Sequence[Morpheme], boundaries: Iterable[int] | None = None) -> list[int]:
+    """Boundaries where one piece ends in a vowel and the next starts with one (and one can lose it)."""
+    vowel = lambda p: p in SOUNDS and SOUNDS[p].phoneme_class == PhonemeClass.VOWEL  # noqa: E731
+    candidates = range(1, len(pieces)) if boundaries is None else sorted(boundaries)
+    return [i for i in candidates
+            if 0 < i < len(pieces) and vowel(pieces[i - 1].phonemes[-1]) and vowel(pieces[i].phonemes[0])
+            and (len(pieces[i - 1].phonemes) > 1 or len(pieces[i].phonemes) > 1)]
 
 
 def _repairable_boundaries(pieces: Sequence[Morpheme], phonology: Phonology,
@@ -81,33 +100,57 @@ def _repairable_boundaries(pieces: Sequence[Morpheme], phonology: Phonology,
 
 
 def assemble(pieces: Sequence[Morpheme], phonology: Phonology,
-             repair: BoundaryRepair | None = None, object_id: str | None = None) -> AssemblyResult:
+             repair: BoundaryRepair | None = None, object_id: str | None = None,
+             compound_seams: Iterable[int] = ()) -> AssemblyResult:
     """Build a legal form from morphemes, using the fewest boundary repairs possible.
 
-    Tries no repairs first, then every combination of 1, 2, ... repairable
-    boundaries in a fixed order, so the result is deterministic.
+    `compound_seams` are the boundaries where two words of a compound meet. There,
+    two meeting vowels always merge into one (the first word's final vowel drops:
+    tikti + opip -> tiktopip), which is how compounds usually join.
+
+    Elsewhere (affixes), repairs are tried from least to most invasive: no repair,
+    then every combination of the design's linking sounds, and only then vowel
+    elision as a last resort, so affixes stay recognizable and every form that was
+    already legal is unchanged. The order is fixed, so the result is deterministic.
     """
-    naive = _build(pieces, phonology, repair, set())
+    seam_elisions = frozenset(_vowel_meetings(pieces, compound_seams))
+    if seam_elisions:
+        # Compounds join by elision: treat the shortened shape as the starting point.
+        joined = _build(pieces, phonology, repair, set(), seam_elisions)
+        if validate_phoneme_sequence(joined.phonemes, phonology).ok:
+            return joined
+    naive = _build(pieces, phonology, repair, set(), seam_elisions)
     first_check = validate_phoneme_sequence(naive.phonemes, phonology, object_id=object_id)
     if first_check.ok:
         return naive
 
-    repairable = _repairable_boundaries(pieces, phonology, repair)
+    repairable = [b for b in _repairable_boundaries(pieces, phonology, repair) if b not in seam_elisions]
     for count in range(1, len(repairable) + 1):
         for chosen in combinations(repairable, count):
-            candidate = _build(pieces, phonology, repair, set(chosen))
+            candidate = _build(pieces, phonology, repair, set(chosen), seam_elisions)
             if validate_phoneme_sequence(candidate.phonemes, phonology).ok:
                 return candidate
 
-    form = "".join(naive.phonemes)
+    meetings = [b for b in _vowel_meetings(pieces) if b not in seam_elisions]
+    for count in range(1, len(meetings) + 1):
+        for elided in combinations(meetings, count):
+            others = [b for b in repairable if b not in elided]
+            for link_count in range(len(others) + 1):
+                for linked in combinations(others, link_count):
+                    candidate = _build(pieces, phonology, repair, set(linked), seam_elisions | frozenset(elided))
+                    if validate_phoneme_sequence(candidate.phonemes, phonology).ok:
+                        return candidate
+    tried_repairs = bool(repairable or meetings)
+
+    form = phonology.spell(naive.phonemes)
     result = ValidationResult()
     result.add(
         "ILLEGAL_DERIVED_FORM",
-        f"{'+'.join(''.join(p.phonemes) for p in pieces)} gives {form!r}, which is not a legal word"
-        + (" even with boundary repairs" if repairable else ""),
+        f"{'+'.join(phonology.spell(p.phonemes) for p in pieces)} gives {form!r}, which is not a legal word"
+        + (" even with boundary repairs" if tried_repairs else ""),
         object_id=object_id,
-        details={"pieces": ["".join(p.phonemes) for p in pieces], "form": form,
-                 "causes": [i.message for i in first_check.errors], "repairs_tried": bool(repairable)},
+        details={"pieces": [phonology.spell(p.phonemes) for p in pieces], "form": form,
+                 "causes": [i.message for i in first_check.errors], "repairs_tried": tried_repairs},
     )
     raise MorphologyError(result)
 
@@ -150,7 +193,7 @@ class MorphologyEngine:
                 result.add("INVALID_AFFIX", f"Morpheme {m.gloss!r} is a root, not an affix", object_id=m.id)
             unknown = sorted({p for p in m.phonemes if not self.phonology.has_phoneme(p)})
             if unknown:
-                result.add("UNKNOWN_PHONEME", f"Affix -{''.join(m.phonemes)} uses unknown phonemes {unknown}",
+                result.add("UNKNOWN_PHONEME", f"Affix -{self.phonology.spell(m.phonemes)} uses unknown phonemes {unknown}",
                            object_id=m.id, details={"phonemes": unknown})
         for r in self.rules.values():
             if r.morpheme_id not in self.morphemes:
@@ -159,7 +202,8 @@ class MorphologyEngine:
             for field, cls in (("linking_vowel", PhonemeClass.VOWEL), ("linking_consonant", PhonemeClass.CONSONANT)):
                 p = getattr(self.boundary_repair, field)
                 if p and (not self.phonology.has_phoneme(p) or self.phonology.phoneme(p).phoneme_class != cls):
-                    result.add("INVALID_REPAIR", f"{field} {p!r} must be a {cls.name.lower()} in the inventory")
+                    result.add("INVALID_REPAIR", f"{field} {self.phonology.spell([p])!r} must be a "
+                               f"{cls.name.lower()} in the inventory")
         if not result.ok:
             raise MorphologyError(result)
 
@@ -219,6 +263,12 @@ class MorphologyEngine:
                         object_id=concept_id)
 
         affix = self.morphemes[rule.morpheme_id]
+        if affix.id in base.morpheme_ids:
+            # ma + ma + bimaf: stacking the same affix rarely adds meaning, and reads as filler.
+            raise _fail("AFFIX_REPEATED",
+                        f"{concept_id!r} would add the {rule.id!r} affix to {base.concept_id!r}, which already "
+                        "has it. Use a different base or rule, a compound, or an independent root",
+                        object_id=concept_id)
         morpheme_ids = ([affix.id, *base.morpheme_ids] if affix.type == MorphemeType.PREFIX
                         else [*base.morpheme_ids, affix.id])
         assembly = assemble([self.morphemes[m] for m in morpheme_ids], self.phonology,
@@ -237,12 +287,43 @@ class MorphologyEngine:
         self._store(lexeme, assembly)
         return lexeme
 
+    # --- compounding ----------------------------------------------------------
+
+    def compound(self, part_lexeme_ids: Sequence[str], concept_id: str, gloss: str,
+                 part_of_speech: PartOfSpeech) -> Lexeme:
+        """Join two existing words into a new one (seahorse = sea + horse), or raise with the reason.
+
+        The parts' morphemes are joined in order, with the usual boundary repairs at the seam.
+        """
+        parts = [self.lexemes.get(p) for p in part_lexeme_ids]
+        if len(parts) != 2 or any(p is None for p in parts):
+            raise _fail("UNKNOWN_BASE", f"A compound needs two existing words; got {list(part_lexeme_ids)}",
+                        object_id=concept_id)
+        if parts[0].id == parts[1].id:
+            raise _fail("SELF_COMPOUND", f"{concept_id!r} can't join {parts[0].concept_id!r} with itself",
+                        object_id=concept_id)
+        if (depth := max(self.depth(p.id) for p in parts) + 1) > self.max_depth:
+            raise _fail("DERIVATION_TOO_DEEP",
+                        f"{concept_id!r} would be {depth} steps from a root (max {self.max_depth})",
+                        object_id=concept_id)
+        morpheme_ids = [*parts[0].morpheme_ids, *parts[1].morpheme_ids]
+        assembly = assemble([self.morphemes[m] for m in morpheme_ids], self.phonology, self.boundary_repair,
+                            object_id=concept_id, compound_seams=[len(parts[0].morpheme_ids)])
+        lexeme_id = new_id()
+        self._reserve(assembly.phonemes, lexeme_id, "compound", concept_id)
+        lexeme = Lexeme(
+            id=lexeme_id, language_id=self.language_id, concept_id=concept_id, part_of_speech=part_of_speech,
+            origin=LexemeOrigin.COMPOUND, morpheme_ids=morpheme_ids,
+            senses=[LexicalSense(concept_id=concept_id, gloss=gloss)],
+            compound=Compound(output_lexeme_id=lexeme_id, part_lexeme_ids=[p.id for p in parts]),
+        )
+        self._store(lexeme, assembly)
+        return lexeme
+
     def depth(self, lexeme_id: str) -> int:
-        """Number of derivation steps between a lexeme and its root."""
-        lexeme, steps = self.lexemes[lexeme_id], 0
-        while lexeme.derivation:
-            lexeme, steps = self.lexemes[lexeme.derivation.base_lexeme_id], steps + 1
-        return steps
+        """Building steps between a lexeme and its roots; a compound counts its deeper part."""
+        bases = self.lexemes[lexeme_id].base_lexeme_ids
+        return 1 + max(self.depth(b) for b in bases) if bases else 0
 
     def word_family(self, root_lexeme_id: str) -> list[Lexeme]:
         """Every lexeme derived (directly or indirectly) from a root, root first."""
@@ -263,10 +344,10 @@ class MorphologyEngine:
         except DuplicateFormError as e:
             owner = self.lexemes.get(e.existing.owner_id)
             raise _fail("DUPLICATE_FORM",
-                        f"{''.join(phonemes)!r} for {concept_id!r} is already the word for "
+                        f"{self.phonology.spell(phonemes)!r} for {concept_id!r} is already the word for "
                         f"{owner.concept_id if owner else e.existing.owner_kind!r}",
                         object_id=concept_id,
-                        details={"form": "".join(phonemes), "phonemes": list(phonemes),
+                        details={"form": self.phonology.spell(phonemes), "phonemes": list(phonemes),
                                  "existing_concept": owner.concept_id if owner else None}) from e
 
     def _store(self, lexeme: Lexeme, assembly: AssemblyResult) -> None:

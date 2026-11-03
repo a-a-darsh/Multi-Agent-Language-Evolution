@@ -106,17 +106,23 @@ def test_user_word_can_be_a_base():
     assert sailor.startswith("mari")
 
 
-def test_unambiguous_wrong_rule_is_corrected_by_code():
-    result = build(entry("bad", "good", "agent"))  # only 'negative' makes adjective -> adjective
+@pytest.mark.parametrize("concept, base, rule", [
+    ("wave", "water", "agent"),     # the user's example shape: a noun from a noun via any affix
+    ("merchant", "buy", "agent"),   # agent usually takes nouns; a verb works too
+    ("sailor", "good", "place"),    # place usually takes nouns; any word works
+])
+def test_any_affix_attaches_to_any_word(concept, base, rule):
+    """Parts of speech guide the planner but never block a derivation (it blocked wave = water + movement)."""
+    result = build(entry(concept, base, rule))
     assert not result.failures
-    assert [n.code for n in result.notes] == ["RULE_CORRECTED"]
-    assert word(result, "bad")[1] == "mo" + word(result, "good")[1]
+    lexeme, form = word(result, concept)
+    assert lexeme.origin == LexemeOrigin.DERIVED
+    assert lexeme.part_of_speech == next(c for c in CONCEPTS if c.id == concept).part_of_speech
+    assert form.startswith(word(result, base)[1])
+    assert validate_lexicon(result.state).ok
 
 
 @pytest.mark.parametrize("bad, code", [
-    (entry("sailor", "good", "agent"), "NO_RULE_FITS"),        # nothing makes noun from adjective
-    (entry("sea", "ship", "negative"), "RULE_DOES_NOT_FIT"),   # agent and place both fit: LLM must choose
-    (entry("bad", "fish", "agent"), "NO_RULE_FITS"),           # nothing makes adjective from noun
     (entry("sailor", "sailor"), "SELF_DERIVATION"),
 ])
 def test_invalid_entries_fall_back_to_roots(bad, code):
@@ -159,14 +165,16 @@ def test_shared_word_is_one_entry_with_two_meanings():
     assert validate_lexicon(result.state).ok
 
 
-@pytest.mark.parametrize("bad, code", [
-    (shared_word("good", "sea"), "SENSE_POS_MISMATCH"),     # adjective can't share a noun's word
-    (shared_word("sea", "sea"), "SELF_DERIVATION"),
-])
-def test_invalid_shared_words_get_their_own_root(bad, code):
-    result = build(extensions=[bad])
-    assert result.failures[bad.concept_id].code == code
-    assert word(result, bad.concept_id)[0].origin == LexemeOrigin.GENERATED_ROOT
+def test_self_shared_word_gets_its_own_root():
+    result = build(extensions=[shared_word("sea", "sea")])
+    assert result.failures["sea"].code == "SELF_DERIVATION"
+    assert word(result, "sea")[0].origin == LexemeOrigin.GENERATED_ROOT
+
+
+def test_shared_word_across_parts_of_speech_is_allowed():
+    result = build(extensions=[shared_word("burn", "fire")])  # one word for "fire" and "to burn"
+    fire, _ = word(result, "fire")
+    assert [s.concept_id for s in fire.senses] == ["fire", "burn"]
 
 
 def test_shared_word_cannot_borrow_a_borrowed_word():
@@ -268,34 +276,43 @@ def derivation(concept, base, rule="agent") -> dict:
     derivation("water", "sea", "place"),   # user word: cannot be derived
 ])
 def test_plan_schema_only_accepts_valid_ids(bad):
-    PLAN_SCHEMA.model_validate({"reasoning": "r", "derivations": [derivation("sailor", "sea")], "extended_senses": []})
+    PLAN_SCHEMA.model_validate({"reasoning": "r", "compounds": [], "derivations": [derivation("sailor", "sea")],
+                                "extended_senses": []})
     with pytest.raises(ValidationError):
-        PLAN_SCHEMA.model_validate({"reasoning": "r", "derivations": [bad], "extended_senses": []})
+        PLAN_SCHEMA.model_validate({"reasoning": "r", "compounds": [], "derivations": [bad], "extended_senses": []})
 
 
 def test_repair_schema_only_accepts_failing_ids():
     schema = repair_schema(["sailor"], CONCEPT_IDS, RULE_IDS)
     with pytest.raises(ValidationError):
         schema.model_validate({"fixes": [{"concept_id": "fish", "action": "independent_root",
-                                          "base_concept_id": None, "rule_id": None}]})
+                                          "base_concept_id": None, "second_base_concept_id": None,
+                                          "rule_id": None}]})
 
 
 # --- planner graph -------------------------------------------------------------------
 
-def plan(*derivations, shared=()) -> dict:
-    return {"reasoning": "Maritime families.", "derivations": [derivation(c, b, r) for c, b, r in derivations],
+def plan(*derivations, shared=(), compounds=()) -> dict:
+    return {"reasoning": "Maritime families.",
+            "compounds": [{"concept_id": c, "first_concept_id": a, "second_concept_id": b, "explanation": "x"}
+                          for c, a, b in compounds],
+            "derivations": [derivation(c, b, r) for c, b, r in derivations],
             "extended_senses": [{"concept_id": c, "base_concept_id": b, "explanation": "linked"} for c, b in shared]}
 
 
-def fixes(*derivations, roots=()) -> dict:
-    return {"fixes": [{"concept_id": c, "action": "derive", "base_concept_id": b, "rule_id": r}
-                      for c, b, r in derivations] +
-                     [{"concept_id": c, "action": "independent_root", "base_concept_id": None, "rule_id": None}
-                      for c in roots]}
+def fixes(*derivations, roots=(), compounds=()) -> dict:
+    return {"fixes": [{"concept_id": c, "action": "derive", "base_concept_id": b, "second_base_concept_id": None,
+                       "rule_id": r} for c, b, r in derivations] +
+                     [{"concept_id": c, "action": "compound", "base_concept_id": a, "second_base_concept_id": b,
+                       "rule_id": None} for c, a, b in compounds] +
+                     [{"concept_id": c, "action": "independent_root", "base_concept_id": None,
+                       "second_base_concept_id": None, "rule_id": None} for c in roots]}
 
 
 def reviews(*items) -> dict:
-    return {"reviews": [{"concept_id": c, "literal_meaning": "m", "plausible": p} for c, p in items]}
+    """(concept, plausible) or (concept, plausible, missing)."""
+    return {"reviews": [{"concept_id": i[0], "literal_meaning": "m", "plausible": i[1],
+                         "missing": i[2] if len(i) > 2 else ""} for i in items]}
 
 
 def run(llm, critic=None, target=1):
@@ -312,7 +329,8 @@ def test_planner_happy_path():
 
 
 # Cycles can't be prevented by the schema, so they exercise the repair loop.
-CYCLE = (("navigator", "fisher", "agent"), ("fisher", "navigator", "agent"))
+# navigator = fisher + place (not + agent again: fish+agent+agent would stack the same affix).
+CYCLE = (("navigator", "fisher", "place"), ("fisher", "navigator", "agent"))
 
 
 def test_partial_repair_only_sends_failures():
@@ -333,11 +351,10 @@ def test_repair_can_choose_independent_root():
     assert {e.concept_id for e in outcome.plan} == {"sailor"}
 
 
-def test_repair_message_lists_valid_rules():
-    llm = ScriptedLLM([plan(("sea", "ship", "negative")), fixes(("sea", "ship", "place"))])
-    outcome = run(llm)
-    assert "Rules that can: ['agent', 'place']" in llm.received[1][-1].content
-    assert outcome.status == "succeeded" and outcome.warnings == []
+def test_planner_prompt_presents_parts_of_speech_as_guidance():
+    outcome = run(ScriptedLLM([plan(("sailor", "sea", "agent"))]))
+    prompt = outcome.llm_calls[0].messages[1]["content"]
+    assert "Usually on a noun/verb, usually makes a noun" in prompt
 
 
 def test_unrepaired_failures_become_warnings():
@@ -400,6 +417,6 @@ def test_new_concepts_appear_in_dictionary_and_can_be_bases():
 
 
 def test_pipeline_stops_if_design_fails():
-    request = GenerationRequest.model_validate({"language_preferences": {"custom_words": {"oasis": "strak"}}})
+    request = GenerationRequest.model_validate({"language_preferences": {"custom_words": {"oasis": "rtak"}}})
     outcome = run_generation(request, AgentLLMs(designer=ScriptedLLM([]), planner=ScriptedLLM([]), critic=None))
     assert outcome.status == "failed" and outcome.dictionary is None

@@ -23,7 +23,7 @@ class InlineExecutor(Executor):
         return future
 
 
-PLAN = {"reasoning": "r", "derivations": [
+PLAN = {"reasoning": "r", "compounds": [], "derivations": [
     {"concept_id": "enemy", "base_concept_id": "fight", "rule_id": "agent", "explanation": "fighter"},
     {"concept_id": "bad", "base_concept_id": "good", "rule_id": "negative", "explanation": "not good"},
 ], "extended_senses": []}

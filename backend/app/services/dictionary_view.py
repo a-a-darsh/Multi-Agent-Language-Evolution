@@ -44,6 +44,8 @@ class EntryDetail(EntrySummary):
     syllables: list[str]
     derived_from: EntrySummary | None = None
     rule: RuleInfo | None = None
+    # For a compound: its two parts, in order.
+    compound_of: list[EntrySummary] = Field(default_factory=list)
     derived_words: list[EntrySummary] = Field(default_factory=list)
     family_root: EntrySummary
     family: list[EntrySummary] = Field(default_factory=list)
@@ -64,8 +66,9 @@ class DictionaryView:
         self.rules = {r.id: r for r in state.derivational_rules}
         self.children: dict[str, list[Lexeme]] = {}
         for lx in state.lexemes:
-            if lx.derivation:
-                self.children.setdefault(lx.derivation.base_lexeme_id, []).append(lx)
+            # A compound is a child of both its parts, so it shows up in both word families.
+            for base in lx.base_lexeme_ids:
+                self.children.setdefault(base, []).append(lx)
 
     def summary(self, lx: Lexeme) -> EntrySummary:
         # A word with several meanings (polysemy) lists them all: "zinc; wealth".
@@ -90,14 +93,18 @@ class DictionaryView:
         return EntryPage(total=len(matches), page=page, page_size=page_size, entries=matches[start:start + page_size])
 
     def root_of(self, lx: Lexeme) -> Lexeme:
-        while lx.derivation:
-            lx = self.lexemes[lx.derivation.base_lexeme_id]
+        """The root a word ultimately comes from; for a compound, its first part's root."""
+        while lx.base_lexeme_ids:
+            lx = self.lexemes[lx.base_lexeme_ids[0]]
         return lx
 
     def family(self, root: Lexeme) -> list[Lexeme]:
-        family = [root]
+        family, seen = [root], {root.id}
         for member in family:
-            family.extend(self.children.get(member.id, []))
+            for child in self.children.get(member.id, []):
+                if child.id not in seen:  # a compound of two family members is listed once
+                    seen.add(child.id)
+                    family.append(child)
         return family
 
     def detail(self, lexeme_id: str) -> EntryDetail | None:
@@ -107,7 +114,7 @@ class DictionaryView:
         form = self.state.form_of(lx.id)
         segments = []
         for seg in form.segments:
-            text = "".join(seg.phonemes)
+            text = self.state.version.phonology.spell(seg.phonemes)
             if seg.morpheme_id is None:
                 segments.append(Segment(text=text, kind="linking"))
                 continue
@@ -124,8 +131,9 @@ class DictionaryView:
         return EntryDetail(
             **self.summary(lx).model_dump(),
             segments=segments,
-            syllables=["".join(s.phonemes) for s in syllables],
+            syllables=[self.state.version.phonology.spell(s.phonemes) for s in syllables],
             derived_from=self.summary(self.lexemes[lx.derivation.base_lexeme_id]) if lx.derivation else None,
+            compound_of=[self.summary(self.lexemes[p]) for p in lx.compound.part_lexeme_ids] if lx.compound else [],
             rule=RuleInfo(id=rule.id, name=rule.name, meaning=rule.meaning) if rule else None,
             derived_words=[self.summary(c) for c in self.children.get(lx.id, [])],
             family_root=self.summary(root),

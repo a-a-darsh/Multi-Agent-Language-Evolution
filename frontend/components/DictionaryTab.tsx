@@ -8,6 +8,7 @@ import type { EntryDetail, EntryPage, EntrySummary } from "@/lib/types";
 const ORIGIN_LABEL: Record<string, string> = {
   generated_root: "root",
   derived: "derived",
+  compound: "compound",
   user_defined: "your word",
 };
 
@@ -48,6 +49,7 @@ export function DictionaryTab({ languageId }: { languageId: string }) {
         </select>
         <select value={origin} onChange={(e) => setOrigin(e.target.value)} aria-label="Origin">
           <option value="">All words</option>
+          <option value="compound">Compounds</option>
           <option value="derived">Derived words</option>
           <option value="generated_root">Roots</option>
           <option value="user_defined">Your words</option>
@@ -119,6 +121,12 @@ function EntryCard({ entry, onOpen }: { entry: EntryDetail; onOpen: (e: EntrySum
         <p>
           Built from {link(entry.derived_from)} with the <strong>{entry.rule.name.toLowerCase()}</strong> affix
           ({entry.rule.meaning}).
+        </p>
+      )}
+
+      {entry.compound_of.length === 2 && (
+        <p>
+          A compound of {link(entry.compound_of[0])} and {link(entry.compound_of[1])}.
         </p>
       )}
 

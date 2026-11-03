@@ -72,7 +72,7 @@ def test_spelling_must_read_back_to_the_same_sounds():
                                  syllable_patterns=["V", "CV", "CVC"], restrictions=[])
     # tas.ha: s (coda) + h (onset) would be written "tasha" and read back as ta + sha.
     assert codes(["t", "a", "s", "h", "a"], phonology) == ["AMBIGUOUS_SPELLING"]
-    assert codes(["t", "a", "sh", "a"], phonology) == []
+    assert codes(["t", "a", "ʃ", "a"], phonology) == []
     assert codes(["t", "a", "s", "t", "a"], phonology) == []
 
 

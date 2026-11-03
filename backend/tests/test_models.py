@@ -31,7 +31,7 @@ def test_phoneme_from_catalog():
 
 
 @pytest.mark.parametrize("overrides, message", [
-    ({"syllable_patterns": ["CCV"]}, "unsupported syllable patterns"),
+    ({"syllable_patterns": ["CCCCV"]}, "unsupported syllable patterns"),
     ({"phonemes": [Phoneme.from_grapheme("p")]}, "at least one vowel"),
     ({"phonemes": [Phoneme.from_grapheme("a"), Phoneme.from_grapheme("a")]}, "duplicate"),
     ({"restrictions": [PositionRestriction(phoneme_id="z", forbidden_positions=[Position.CODA])]},

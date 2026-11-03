@@ -93,6 +93,9 @@ class LanguageOverview(BaseModel):
     counts: dict[str, int]
     warnings: list[ValidationIssue]
     generation_id: str
+    # The year the current version of the language starts, and how many versions it has had.
+    current_year: int
+    version_count: int
 
 
 @router.get("/languages")
@@ -110,7 +113,7 @@ def get_language(language_id: str, repo: Repository = Depends(get_repository)) -
     affixes = []
     for rule in state.derivational_rules:
         m = morphemes[rule.morpheme_id]
-        form = "".join(m.phonemes)
+        form = ph.spell(m.phonemes)
         examples = [view.summary(lx) for lx in state.lexemes if lx.derivation and lx.derivation.rule_id == rule.id][:4]
         affixes.append(Affix(rule_id=rule.id, name=rule.name, meaning=rule.meaning,
                              form=f"{form}-" if m.type == MorphemeType.PREFIX else f"-{form}",
@@ -126,13 +129,16 @@ def get_language(language_id: str, repo: Repository = Depends(get_repository)) -
         id=state.language.id, name=state.language.name, summary=state.summary, civilization=state.civilization,
         consonants=[sound(p) for p in ph.consonants], vowels=[sound(p) for p in ph.vowels],
         syllable_patterns=ph.syllable_patterns, allow_hiatus=ph.allow_hiatus,
-        restrictions=[Restriction(letter=r.phoneme_id, not_allowed=r.forbidden_positions) for r in ph.restrictions],
+        restrictions=[Restriction(letter=ph.spell([r.phoneme_id]), not_allowed=r.forbidden_positions)
+                      for r in ph.restrictions],
         word_order=g.word_order.value, morphological_type=g.morphological_type.value,
         adposition_type=g.adposition_type.value if g.adposition_type else None,
         features=[Feature(name=f.name, description=f.description, realization=f.realization) for f in g.features],
-        affixes=affixes, linking_vowel=repair.linking_vowel if repair else None,
-        linking_consonant=repair.linking_consonant if repair else None,
-        counts=counts, warnings=warnings, generation_id=stored.generation_id)
+        affixes=affixes,
+        linking_vowel=ph.spell([repair.linking_vowel]) if repair and repair.linking_vowel else None,
+        linking_consonant=ph.spell([repair.linking_consonant]) if repair and repair.linking_consonant else None,
+        counts=counts, warnings=warnings, generation_id=stored.generation_id,
+        current_year=state.version.valid_from_year, version_count=len(state.previous_versions) + 1)
 
 
 @router.get("/languages/{language_id}/world")

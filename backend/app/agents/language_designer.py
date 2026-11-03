@@ -57,7 +57,8 @@ from app.models.common import DomainModel, new_id
 from app.models.design import LanguageDesign
 from app.models.eras import format_year
 from app.models.generation import GenerationRequest
-from app.models.phonology import GRAPHEME_CATALOG, PhonemeClass
+from app.models.phonology import SIMPLE_PATTERNS, PhonemeClass
+from app.models.sounds import FOUNDING_SOUNDS
 from app.models.validation import Severity, ValidationIssue
 
 MAX_REPAIRS = 2
@@ -113,9 +114,9 @@ class DesignOutcome(DomainModel):
 
 # --- prompts -------------------------------------------------------------------
 
-_VOWELS = "".join(g for g, e in GRAPHEME_CATALOG.items() if e.phoneme_class == PhonemeClass.VOWEL)
-_CONSONANTS = " ".join(f"{g}=/{e.ipa}/" for g, e in GRAPHEME_CATALOG.items()
-                       if e.phoneme_class == PhonemeClass.CONSONANT)
+_VOWELS = "".join(s.default_grapheme for s in FOUNDING_SOUNDS if s.phoneme_class == PhonemeClass.VOWEL)
+_CONSONANTS = " ".join(f"{s.default_grapheme}=/{s.ipa}/" for s in FOUNDING_SOUNDS
+                       if s.phoneme_class == PhonemeClass.CONSONANT)
 
 SYSTEM_PROMPT = f"""You are an expert linguist designing the founding state of a fictional language \
 for a simulation. Code will later generate roots and build derived words from your design, so it \
@@ -135,6 +136,9 @@ linking consonant is defined. A suffix starting with a consonant after a consona
 CVC syllables, or a linking vowel.
 - Keep the grammar coherent and modest: choose features that naturally go together. Every grammatical \
 feature the user asks for must appear in `features`.
+- Give every derivational affix a specific meaning (person, place, tool, small, quality of...), never just \
+"forms nouns": words are built mostly by compounding roots, and affixes are used only where they say \
+everything a new word means.
 - Choose a distinctive sound inventory rather than every available letter, and make affix forms \
 distinct from the user's own words.
 
@@ -174,9 +178,12 @@ def _describe_request(state: DesignState) -> str:
     if reqs.words:
         lines.append("\n## The user's own words (must remain legal exactly as spelled)")
         lines += [f"- {w.concept_id}: {w.spelling} (syllables: {'.'.join(w.syllable_patterns)})" for w in reqs.words]
-        lines.append(f"These require the letters {', '.join(reqs.required_phonemes)} and the syllable shapes "
+        lines.append(f"These require the letters {', '.join(reqs.required_letters)} and the syllable shapes "
                      f"{', '.join(reqs.required_patterns)}" + ("; and adjacent vowels (allow_hiatus = true)."
                                                                if reqs.requires_hiatus else "."))
+        if clustered := [p for p in reqs.required_patterns if p not in SIMPLE_PATTERNS]:
+            lines.append(f"The shapes {', '.join(clustered)} have consonant clusters; they are added to the "
+                         "design automatically. List only V, CV, VC, CVC in `syllable_patterns`.")
     return "\n".join(lines)
 
 
@@ -271,7 +278,7 @@ def build_design_graph(llm: StructuredLLM, max_repairs: int = MAX_REPAIRS, criti
         draft, adjustments = apply_user_requirements(draft, state["requirements"])
         warnings: list[ValidationIssue] = []
         try:
-            built = build_design(draft, state["language_id"])
+            built = build_design(draft, state["language_id"], state["requirements"].requires_s_clusters)
         except DesignBuildError as e:
             issues = e.result.errors
         else:
@@ -314,7 +321,7 @@ def build_design_graph(llm: StructuredLLM, max_repairs: int = MAX_REPAIRS, criti
             draft, leftovers = state["draft"], issues  # anything left is soft: keep as warnings
         # Notes accumulate on every validate pass; report each distinct one once.
         notes = list({(n.code, n.message): n for n in state.get("notes", [])}.values())
-        return {"draft": draft, "design": build_design(draft, state["language_id"]), "status": "succeeded",
+        return {"draft": draft, "design": build_design(draft, state["language_id"], state["requirements"].requires_s_clusters), "status": "succeeded",
                 "warnings": leftovers + notes + state.get("advisory", [])}
 
     def fail(state: DesignState) -> DesignState:

@@ -44,7 +44,8 @@ export default function LanguagePage() {
         </p>
         <h1>{language.name}</h1>
         <p>
-          {total} words · {language.counts.derived} derived · {language.counts.user_defined} of your own
+          {total} words · {language.counts.compound ?? 0} compounds · {language.counts.derived} derived ·{" "}
+          {language.counts.user_defined} of your own
         </p>
       </header>
 

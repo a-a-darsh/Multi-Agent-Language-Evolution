@@ -16,16 +16,19 @@ Differences from the design agent worth noticing:
 """
 
 import operator
+import re
 from typing import Annotated, Literal, TypedDict
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
 
-from app.agents.dictionary_schema import PlanEntry, SenseExtension, plan_schema, repair_schema, review_schema
+from app.agents.dictionary_schema import (
+    CompoundEntry, PlanEntry, Planned, SenseExtension, plan_schema, repair_schema, review_schema,
+)
 from app.agents.runner import StepCallback, invoke_with_progress
 from app.data import load_semantic_inventory
 from app.generation.concept_selection import select_concepts
-from app.generation.dictionary_builder import BuildResult, build_dictionary, failure_warnings
+from app.generation.dictionary_builder import BuildResult, build_dictionary, failure_warnings, is_basic_vocabulary
 from app.generation.user_vocabulary import UserWord
 from app.llm.structured import LLMCallError, LLMCallRecord, StructuredLLM, recorded_call
 from app.models.civilization import Civilization
@@ -45,7 +48,7 @@ TARGET_TOLERANCE = 0.85
 
 class PlanningRound(DomainModel):
     step: str
-    entries: list[PlanEntry] = []
+    entries: list[PlanEntry | CompoundEntry] = []
     shared: list[SenseExtension] = []
     issues: list[ValidationIssue] = []
 
@@ -60,7 +63,7 @@ class PlannerState(TypedDict, total=False):
     # notes, and redeclaring it would silently drop its reducer.
     user_notes: str | None
     concepts: list[SemanticConcept]
-    plan: dict[str, PlanEntry]                 # concept_id -> entry; absent = independent root
+    plan: dict[str, Planned]                   # concept_id -> derivation or compound; absent = own root
     extensions: dict[str, SenseExtension]      # concept_id -> shares the word of another concept
     build: BuildResult
     issues: list[ValidationIssue]              # what the next repair must fix
@@ -83,7 +86,7 @@ class PlannerState(TypedDict, total=False):
 class PlanningOutcome(DomainModel):
     status: Literal["succeeded", "failed"]
     state: LanguageState | None = None
-    plan: list[PlanEntry] = []
+    plan: list[PlanEntry | CompoundEntry] = []
     extensions: list[SenseExtension] = []
     warnings: list[ValidationIssue] = []
     issues: list[ValidationIssue] = []
@@ -94,20 +97,40 @@ class PlanningOutcome(DomainModel):
 # --- prompts -------------------------------------------------------------------
 
 PLANNER_PROMPT = """You are a linguist building the founding dictionary of a fictional language. \
-Every concept will get a word. Your job: decide which concepts are DERIVED from another concept \
-with one of the language's affixes, so the dictionary has real word families instead of unrelated words. \
-Code will build the actual word forms; you only choose relationships.
+Every concept will get a word. Your job: decide which concepts are BUILT from other concepts' words, so \
+the dictionary has real word families instead of unrelated words. Code will build the actual word forms; \
+you only choose relationships. There are two ways to build a word:
+- COMPOUND: join two words when the concept really combines two things: seahorse = sea + horse, \
+sunrise = sun + rise, blacksmith = black + smith. Prefer a compound to an affix whenever the concept has \
+a quality no affix can say.
+- DERIVATION: one word + an affix, when the affix's meaning plus the base says EVERYTHING important \
+about the concept: fisher = fish + agent, harbor = ship + place, darkness = dark + quality. Then the \
+affix is right: don't spell it out as a compound (fish + person).
+- OWN ROOT: basic vocabulary keeps its own word, as in real languages: body parts, natural things, \
+basic actions, colors, numbers, kinship. These are never compounds (they aren't offered as compounds); \
+an affix may derive a few where it fits exactly (bad = not + good).
+- Every part must contribute its own meaning. Numbers, quantities (one, many, all) and function words \
+are never parts, and don't reuse one word as a filler in many compounds.
+- An affix's result must be what the affix makes: the person affix makes a person, so it can't make a \
+verb like "buy", and the tool affix makes a tool, so it can't make "sell".
 
 Rules:
-- Derive a concept only when base + affix naturally gives its meaning: sailor = sea + agent, \
-harbor = ship + place, fisher = fish + agent, darkness = black + quality. Everything else gets its own root.
-- Decide in this order: the concept, then the base whose MEANING it comes from, then the affix whose \
-meaning connects them. The parts of speech listed for each affix are only its typical use: any affix \
-may attach to any word when the meaning works (wave = water + movement).
-- The base must be another concept in the list. A derived word can be the base of another \
-derivation, but at most 2 steps from a root. No cycles.
+- Before using an affix, ask: does the concept have an important quality that neither the base nor the \
+affix says? If so, use a compound that says it, or give the concept its own root. (Oar = swim + noun \
+fails twice: an oar is a tool, and it is for rowing, not swimming.)
+- An affix whose meaning is only grammatical (making a noun, verb or adjective) must not be used to \
+build a word with a specific meaning.
+- Compound parts are things, actions or qualities, never grammatical words (in, not, and, this): \
+those are what affixes are for.
+- Never put the same affix on a word twice (ma-ma-bimaf), and don't chain affixes for the sake of it.
+- Decide in this order: the concept, then the words whose MEANINGS it comes from, then how to join them. \
+The parts of speech listed for each affix are only its typical use: any affix may attach to any word when \
+the meaning works (wave = water + movement).
+- Bases and parts must be other concepts in the list. A built word can be part of another, but at most \
+2 steps from a root. No cycles.
 - Concepts marked (user word) keep the user's word and cannot be derived, but they can be bases.
-- Let the culture guide which families are rich. Aim for the number of derivations given below.
+- Let the culture guide which families are rich. Aim for the number of built words given below \
+(compounds and derivations together).
 - Optionally, a few concepts can SHARE another concept's word (extended_senses) when THIS culture \
 links the two meanings, e.g. a people whose money is zinc might use one word for zinc and wealth. \
 Use this sparingly, only for strong links in this culture. \
@@ -124,7 +147,8 @@ def _rule_lines(design: LanguageDesign) -> str:
     lines = []
     for r in design.derivational_rules:
         m = affixes[r.morpheme_id]
-        form = f"{''.join(m.phonemes)}-" if m.type.value == "prefix" else f"-{''.join(m.phonemes)}"
+        spelled = design.phonology.spell(m.phonemes)
+        form = f"{spelled}-" if m.type.value == "prefix" else f"-{spelled}"
         lines.append(f"- {r.id} ({form}): {r.meaning}. Usually on a {'/'.join(p.value for p in r.input_parts_of_speech)}, "
                      f"usually makes a {r.output_part_of_speech.value}")
     return "\n".join(lines)
@@ -141,9 +165,9 @@ def _context(state: PlannerState) -> str:
             f"## Language: {design.name}\n{design.summary}\n\n"
             f"## Derivational affixes\n{_rule_lines(design)}\n\n"
             f"## Concepts ({len(state['concepts'])})\n{_concept_lines(state['concepts'], user)}\n\n"
-            f"## Target\nPlan about {state['target_derived']} derivations "
-            f"({round(state['derived_ratio'] * 100)}% of the dictionary). Only use derivations whose meaning "
-            "really follows; fewer good ones are better than forced ones.")
+            f"## Target\nPlan about {state['target_derived']} built words, compounds and derivations together "
+            f"({round(state['derived_ratio'] * 100)}% of the dictionary). Only build words "
+            "whose meaning really follows from their parts; fewer good ones are better than forced ones.")
 
 
 # --- the graph -----------------------------------------------------------------
@@ -163,9 +187,8 @@ def build_planner_graph(llm: StructuredLLM, max_repairs: int = MAX_REPAIRS, crit
         if state["target_derived"] == 0:
             return {"rounds": [PlanningRound(step="plan")]}  # 0%: every word is its own root, no LLM call
         concept_ids, rule_ids = ids(state)
-        user = {w.concept_id for w in state["user_words"]}
-        schema = plan_schema([c for c in concept_ids if c not in user], concept_ids, rule_ids,
-                             max_derivations=state["target_derived"] + 10)
+        schema = plan_schema(_derivable(state), concept_ids, rule_ids, max_derivations=state["target_derived"] + 10,
+                             compoundable_ids=_compoundable(state))
         messages = [SystemMessage(PLANNER_PROMPT), HumanMessage(_context(state))]
         result, record, error = recorded_call(llm, "plan", messages, schema)
         if error:
@@ -174,9 +197,7 @@ def build_planner_graph(llm: StructuredLLM, max_repairs: int = MAX_REPAIRS, crit
             return {"llm_calls": [record], "plan": {}, "llm_down": isinstance(error, LLMCallError), "notes": [ValidationIssue(
                 code=code, severity=Severity.WARNING,
                 message=f"No derivation plan ({error}); every word was given its own root")]}
-        entries: dict[str, PlanEntry] = {}
-        for d in result.derivations:
-            entries.setdefault(d.concept_id, PlanEntry(**d.model_dump()))  # if listed twice, keep the first
+        entries = _planned(result)
         shared: dict[str, SenseExtension] = {}
         for x in result.extended_senses:
             shared.setdefault(x.concept_id, SenseExtension(**x.model_dump()))
@@ -202,7 +223,7 @@ def build_planner_graph(llm: StructuredLLM, max_repairs: int = MAX_REPAIRS, crit
         if critic_llm is None or not (realized or shared):
             return {"issues": [], "critique_issues": []}
         schema = review_schema([e.concept_id for e in realized] + [x.concept_id for x in shared])
-        listing = "\n".join([f"- {e.concept_id} = {e.base_concept_id} + {e.rule_id}" for e in realized] +
+        listing = "\n".join([f"- {e.concept_id} = {e.describe()}" for e in realized] +
                             [f"- {x.concept_id}: same word as {x.base_concept_id} ({x.explanation})" for x in shared])
         messages = [SystemMessage(CRITIC_PROMPT),
                     HumanMessage(f"## Affixes\n{_rule_lines(state['design'])}\n\n## Derivations to review\n{listing}")]
@@ -210,12 +231,13 @@ def build_planner_graph(llm: StructuredLLM, max_repairs: int = MAX_REPAIRS, crit
         if error:
             return {"llm_calls": [record], "issues": [], "critique_issues": [], "notes": [ValidationIssue(
                 code="CRITIC_UNAVAILABLE", severity=Severity.WARNING, message=f"Derivations were not reviewed: {error}")]}
-        planned = {e.concept_id: f"{e.concept_id} = {e.base_concept_id} + {e.rule_id}" for e in realized}
+        planned = {e.concept_id: f"{e.concept_id} = {e.describe()}" for e in realized}
         planned |= {x.concept_id: f"{x.concept_id} sharing the word for {x.base_concept_id}" for x in shared}
         issues = [ValidationIssue(
             code="IMPLAUSIBLE_DERIVATION", object_id=r.concept_id, severity=Severity.WARNING,
-            message=f"{planned[r.concept_id]} means '{r.literal_meaning}', which is a poor fit for '{r.concept_id}'")
-            for r in result.reviews if not r.plausible and r.concept_id in planned]
+            message=f"{planned[r.concept_id]} means '{r.literal_meaning}', which is a poor fit for '{r.concept_id}'"
+                    + (f" (missing: {r.missing})" if _names_a_gap(r.missing) else ""))
+            for r in result.reviews if (not r.plausible or _names_a_gap(r.missing)) and r.concept_id in planned]
         rejected = {i.object_id for i in issues}
         newly_approved = {item.concept_id: _signature(item) for item in [*realized, *shared]
                           if item.concept_id not in rejected}
@@ -228,20 +250,21 @@ def build_planner_graph(llm: StructuredLLM, max_repairs: int = MAX_REPAIRS, crit
         taken = set(state["plan"]) | set(state["extensions"]) | set(state["build"].failures)
         taken |= {w.concept_id for w in state["user_words"]}
         concept_ids, rule_ids = ids(state)
-        candidates = [c for c in concept_ids if c not in taken]
+        candidates = [c for c in _derivable(state) if c not in taken]
         wanted = state["target_derived"] - _derived_count(state["build"])
-        schema = plan_schema(candidates, concept_ids, rule_ids, max_derivations=wanted + 5)
+        schema = plan_schema(candidates, concept_ids, rule_ids, max_derivations=wanted + 5,
+                             compoundable_ids=[c for c in _compoundable(state) if c not in taken])
         messages = [SystemMessage(PLANNER_PROMPT), HumanMessage(_context(state)), HumanMessage(
-            f"So far {_derived_count(state['build'])} words are derived, and the target is "
-            f"{state['target_derived']}. Plan about {wanted} MORE derivations. Only concepts that still have "
-            "their own word are offered; existing derivations stay as they are. Leave extended_senses empty. "
-            "Skip any that would be forced: a good derivation matters more than reaching the number.")]
+            f"So far {_derived_count(state['build'])} words are built from others, and the target is "
+            f"{state['target_derived']}. Plan about {wanted} MORE. Only concepts that still "
+            "have their own word are offered; existing ones stay as they are. Leave extended_senses empty. "
+            "Skip any that would be forced: a good word matters more than reaching the number.")]
         result, record, error = recorded_call(llm, "expand", messages, schema)
         update: PlannerState = {"llm_calls": [record], "expansions_used": state["expansions_used"] + 1}
         if error:
             return {**update, "llm_down": isinstance(error, LLMCallError)}
         new_plan = dict(state["plan"])
-        added = [PlanEntry(**d.model_dump()) for d in result.derivations if d.concept_id not in new_plan]
+        added = [e for c, e in _planned(result).items() if c not in new_plan]
         new_plan.update({e.concept_id: e for e in added})
         return {**update, "plan": new_plan, "rounds": [PlanningRound(step="expand", entries=added)]}
 
@@ -251,9 +274,9 @@ def build_planner_graph(llm: StructuredLLM, max_repairs: int = MAX_REPAIRS, crit
         problems = "\n".join(f"- [{i.code}] {i.message}" for i in state["issues"])
         messages = [SystemMessage(PLANNER_PROMPT), HumanMessage(_context(state)), HumanMessage(
             f"These planned words have problems:\n{problems}\n\nFor each of these concepts only, either "
-            "derive it differently (a base whose MEANING it really comes from, with a rule that fits), share "
-            "another concept's word if the culture truly links them, or give it an independent root. "
-            "Everything else is fine and stays as it is.")]
+            "build it as a compound of two words whose meanings make it, derive it differently (a base whose "
+            "MEANING it really comes from, with an affix that says the rest), share another concept's word if "
+            "the culture truly links them, or give it an independent root. Everything else stays as it is.")]
         result, record, error = recorded_call(llm, "repair", messages, schema)
         update: PlannerState = {"llm_calls": [record], "repairs_used": state["repairs_used"] + 1}
         if error:
@@ -265,6 +288,10 @@ def build_planner_graph(llm: StructuredLLM, max_repairs: int = MAX_REPAIRS, crit
             if fix.action == "derive" and fix.base_concept_id and fix.rule_id:
                 new_plan[fix.concept_id] = PlanEntry(concept_id=fix.concept_id, base_concept_id=fix.base_concept_id,
                                                      rule_id=fix.rule_id)
+            elif fix.action == "compound" and fix.base_concept_id and fix.second_base_concept_id:
+                new_plan[fix.concept_id] = CompoundEntry(concept_id=fix.concept_id,
+                                                         first_concept_id=fix.base_concept_id,
+                                                         second_concept_id=fix.second_base_concept_id)
             elif fix.action == "extend" and fix.base_concept_id:
                 new_shared[fix.concept_id] = SenseExtension(concept_id=fix.concept_id,
                                                             base_concept_id=fix.base_concept_id)
@@ -330,23 +357,68 @@ def build_planner_graph(llm: StructuredLLM, max_repairs: int = MAX_REPAIRS, crit
     return graph.compile()
 
 
-def _signature(item: PlanEntry | SenseExtension) -> str:
+def _derivable(state: PlannerState) -> list[str]:
+    """Concepts that may be built with an affix: everything but the user's own words."""
+    user = {w.concept_id for w in state["user_words"]}
+    return [c.id for c in state["concepts"] if c.id not in user]
+
+
+def _compoundable(state: PlannerState) -> list[str]:
+    """Concepts that may be compounds: not basic vocabulary (black is not night + one)."""
+    basic = {c.id for c in state["concepts"] if is_basic_vocabulary(c)}
+    return [c for c in _derivable(state) if c not in basic]
+
+
+def _signature(item: Planned | SenseExtension) -> str:
     if isinstance(item, SenseExtension):
         return f"shared:{item.base_concept_id}"
+    if isinstance(item, CompoundEntry):
+        return f"{item.first_concept_id}&{item.second_concept_id}"
     return f"{item.base_concept_id}+{item.rule_id}"
 
 
+_NO_GAP = re.compile(r"^\W*(none|nothing|no|n/?a|-*|nothing (important |is )?missing|not applicable)?\W*$",
+                     re.IGNORECASE)
+
+
+def _names_a_gap(missing: str) -> bool:
+    """Whether the critic named a real missing quality. Models write 'none' or 'nothing missing'
+    rather than leaving the field empty (found live: every word was rejected for 'nothing missing')."""
+    return not _NO_GAP.match(missing or "")
+
+
 def _derived_count(build: BuildResult) -> int:
-    return sum(lx.derivation is not None for lx in build.state.lexemes)
+    """Words built from other words, by affix or compounding."""
+    return sum(bool(lx.base_lexeme_ids) for lx in build.state.lexemes)
 
 
-CRITIC_PROMPT = """You review planned word derivations in a fictional language. For each derivation, \
-write what base + affix literally means, then judge whether speakers could naturally use that literal \
-meaning for the concept. 'person associated with the sea' for sailor: plausible. 'place of fire' for \
-kitchen: plausible. 'person associated with bread' for king: not plausible. Many languages use metaphor, \
-so accept reasonable extensions; reject only forced or wrong connections. Some entries are SHARED \
-words (one word with two meanings): judge whether this culture could plausibly use one word for both, \
-e.g. zinc and wealth where zinc is money."""
+def _planned(result) -> dict[str, Planned]:
+    """Compounds and derivations from one LLM plan; a concept listed twice keeps its first entry."""
+    entries: dict[str, Planned] = {}
+    for c in result.compounds:
+        entries.setdefault(c.concept_id, CompoundEntry(**c.model_dump()))
+    for d in result.derivations:
+        entries.setdefault(d.concept_id, PlanEntry(**d.model_dump()))
+    return entries
+
+
+CRITIC_PROMPT = """You review planned words in a fictional language that are built from other words: \
+derivations (word + affix) and compounds (two words joined). For each, write what the parts literally say, \
+then name any important quality of the concept that the parts do NOT say, then judge whether speakers \
+could naturally use it for the concept.
+- 'person associated with the sea' for sailor: plausible, nothing missing.
+- sea + horse for seahorse: plausible, nothing missing.
+- 'place of fire' for kitchen: plausible (cooking is implied by fire and place).
+- 'person associated with bread' for king: not plausible.
+- swim + noun formation for oar: not plausible; missing 'a tool; rowing, not swimming'. An affix that \
+only makes a noun or verb never says what a specific thing is.
+- person + small for bone, person + eye for head: not plausible. Basic words (body parts, natural \
+things, basic actions) have their own roots in real languages.
+- trade + person for buy: not plausible; that literally means 'trade person' (a merchant), not an action.
+- a part that adds nothing specific (night + one, heart + one): not plausible.
+Many languages use metaphor, so accept reasonable extensions; reject forced, wrong, or too-vague ones. \
+Some entries are SHARED words (one word with two meanings): judge whether this culture could plausibly use \
+one word for both, e.g. zinc and wealth where zinc is money."""
 
 
 def run_morphological_planning(design: LanguageDesign, civilization: Civilization, user_words: list[UserWord],

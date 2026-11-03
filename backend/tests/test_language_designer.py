@@ -78,8 +78,9 @@ def test_user_word_needs_are_added_by_code_not_llm():
     assert outcome.status == "succeeded" and len(llm.received) == 1  # no repair round needed
     ph = outcome.design.phonology
     assert ph.has_phoneme("r") and ph.has_phoneme("v") and "V" in ph.syllable_patterns
-    [note] = [w for w in outcome.warnings if w.code == "ADJUSTED_FOR_USER_WORDS"]
-    assert "'r'" in note.message and "'v'" in note.message
+    # r is already added for the affix -ri; v only for the user's words.
+    notes = {w.code: w.message for w in outcome.warnings}
+    assert "'v'" in notes["ADJUSTED_FOR_USER_WORDS"] and "'r'" in notes["ADDED_AFFIX_SOUNDS"]
 
 
 def test_gives_up_after_two_repairs():
@@ -117,19 +118,21 @@ def test_unreachable_model_fails_immediately():
 
 def test_bad_user_words_fail_before_calling_llm():
     llm = ScriptedLLM([])
-    outcome = run_language_design(request(custom_words={"oasis": "strak"}), llm)
+    outcome = run_language_design(request(custom_words={"oasis": "rtak"}), llm)
     assert outcome.status == "failed" and llm.received == []
     assert outcome.issues[0].code == "UNSUPPORTED_SYLLABLE_STRUCTURE"
 
 
 @pytest.mark.parametrize("draft, code", [
-    # Vowel-initial suffix, CV-only, no hiatus, no linking consonant: can never attach.
+    # A bare consonant suffix in a CV-only language with no linking vowel: can never attach.
+    # (A vowel suffix like -a now can: it replaces the root's final vowel, as in Italian.)
     (good_draft(syllable_patterns=["CV"], linking_vowel=None, derivational_affixes=[
-        AffixDraft(id="adj", name="Adj", meaning="having", position="suffix", form="a",
+        AffixDraft(id="adj", name="Adj", meaning="having", position="suffix", form="k",
                    input_parts_of_speech=[POS.NOUN], output_part_of_speech=POS.ADJECTIVE)] * 1 + good_draft(
         ).derivational_affixes[:2]), "AFFIX_UNUSABLE"),
     (good_draft(derivational_affixes=good_draft().derivational_affixes[:2] + [
-        AffixDraft(id="buzzing", name="Buzzing", meaning="like a buzz", position="suffix", form="zu",
+        # A missing letter is now added by code; characters that aren't letters at all still fail.
+        AffixDraft(id="buzzing", name="Buzzing", meaning="like a buzz", position="suffix", form="z9",
                    input_parts_of_speech=[POS.NOUN], output_part_of_speech=POS.NOUN)]), "AFFIX_UNKNOWN_SOUNDS"),
     (good_draft(linking_vowel=None, linking_consonant="z"), "INVALID_REPAIR"),
 ])
@@ -283,15 +286,15 @@ def test_advisory_findings_reported_but_never_trigger_repair():
     assert [w.code for w in outcome.warnings] == ["CRITIC_INCOHERENT_GRAMMAR"]
 
 
-def test_design_without_noun_families_triggers_repair():
+def test_class_changing_affixes_are_acceptable():
+    # Affixes can attach to any word now, so a design of class-changing affixes no longer needs repair.
     class_changers = good_draft(derivational_affixes=[
         AffixDraft(id="verbalizer", name="Verbalizer", meaning="to do X", position="suffix", form="ta",
                    input_parts_of_speech=[POS.NOUN], output_part_of_speech=POS.VERB),
         AffixDraft(id="nominalizer", name="Nominalizer", meaning="act of X", position="suffix", form="ri",
                    input_parts_of_speech=[POS.VERB], output_part_of_speech=POS.NOUN),
         good_draft().derivational_affixes[2]])
-    outcome = run_language_design(request(), ScriptedLLM([class_changers, good_draft()]))
-    assert outcome.attempts[1].issues[0].code == "NO_NOUN_FAMILIES"
+    outcome = run_language_design(request(), ScriptedLLM([class_changers]))
     assert outcome.status == "succeeded" and outcome.warnings == []
 
 
