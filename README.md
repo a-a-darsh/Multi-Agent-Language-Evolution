@@ -1,4 +1,4 @@
-# Language Evolution Simulator
+# CogniGenesis
 
 Create a civilization, generate its language, and (eventually) simulate how
 that language evolves. See `backend/README.md` for architecture and design
